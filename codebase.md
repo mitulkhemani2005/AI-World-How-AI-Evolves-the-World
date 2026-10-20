@@ -78,7 +78,7 @@ Vite renders the continuous land, figures, resources, and inspectable life recor
 
 The browser never advances biology. The base decision delay is 1.2 seconds divided by the square root of current speed (minimum 0.35 seconds), plus inference latency. A separate clock multiplies elapsed real running time by `time_scale`; 60 scaled seconds advance one biological day. Auto starts at 2x, doubles every 120 running seconds and caps at 8x. Manual speeds are 1x-16x. A model-selected trip can continue without asking the LLM to reselect its intention at every step. `decision_source` distinguishes fresh choices from continuation and fallback, while `intention_source` records the task's original source. `pending_action`, `construction_project`, `visited_cells` and `last_result` persist individual progress. The `POST /api/world/tick` endpoint remains a manual one-day step. Local computer time drives visible lighting/clock; simulated year/day are separate. Animals never call the LLM. Bodies persist until burial. Pause invalidates model proposals still in flight. SQLite includes the random stream and pending work.
 
-Living population is capped at 128 to bound local LLM and simulation load. Human extinction is recorded while ecology continues. Recoverable action errors retry with backoff; failed ecology updates roll back the partial update and retry. Only explicit pause stops a running world. Startup resumes saved running worlds; shutdown preserves that choice. Wildlife uses local habitat capacity rather than a global quota.
+Living population is capped at 128 to bound local LLM and simulation load. Human extinction is recorded while ecology continues. Recoverable action errors retry with backoff; failed ecology updates roll back the partial update and retry. Only explicit pause stops a running world. Startup resumes saved running worlds; shutdown preserves that choice. Wildlife is capped by healthy habitat and a global maximum of 24. Kept animals have a separate population budget capped at 24. Spawn, reproduction and migration all use `animal_capacity` from `rules.py`. Migration removes surplus animals without creating carcasses.
 
 ## Debugging path
 
@@ -107,3 +107,11 @@ For production, `npm run build --prefix frontend` creates a separate `frontend/d
 - LLM behavior is limited to each agent's available action schema and the information in its individual observation. The Qwen 0.5B default is compact and quick, with less reasoning capacity than larger models.
 - A single local SQLite snapshot is persisted. The browser uses polling, not a streaming transport.
 - The 36×18 world is a compact spherical abstraction with fictional geography, not a scientific map of Earth or a reconstruction of millions of years of evolution.
+
+## Family and food ecology debugging
+
+- Inspect `family_offer`, `family_offer_until_tick`, `last_birth_tick`, and `pregnancy_days_remaining` on an agent. A partner sees incoming offers in their own private observation, and must choose the matching action. An offer lasts seven simulated days. Both same-round proposals and later answers work. Family travel is a continued model intention.
+- `reproduction_block` in `rules.py` is shared by the choice menu and resolver: adults, health/needs, existing pregnancy, capacity reservations, and postpartum recovery must agree in both places.
+- `_survival_reflexes` is the explicitly recorded physical response to urgent needs while model calls wait. Its actions obey normal routing and resource use; it never proposes bonds or reproduction. Infants travel with the primary living parent.
+- `_rebalance_animals`, `_spawn_wildlife`, `_seed_animals`, `_advance_animals`, and `_tame` use the shared animal budget. Migration removes surplus saved-world animals rather than killing them into meat stockpiles.
+- `backend/tests/test_family_and_ecology.py` covers cross-round consent, expiry, partner approach, birth, recovery, resource-consuming reflexes, animal limits, infant travel, and preserved lineage after parent death.

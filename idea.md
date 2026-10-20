@@ -100,8 +100,8 @@ The separate white-themed frontend should let the spectator:
 - See buildings, resources, hazards, groups, and property.
 - Review world records from the API for births, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters. Keep the main spectator free of a visible timeline.
 - Pause, resume, or advance one day. Only explicit pause stops a running world: interventions, extinction, and recoverable errors must not stop its clock or ecosystem. Persist the run/pause choice through backend restarts.
-- Hover world objects for details, animate events at their location, make animals prominent without population counters, and protect the camera from entering terrain.
-- Let agents choose to restore habitat health, fertility, and resource cleanliness. Wildlife spawns according to suitable habitat rather than a global quota.
+- Hover world objects for details, animate events at their location, keep animals very small and secondary, without population counters, and protect the camera from entering terrain.
+- Let agents choose to restore habitat health, fertility, and resource cleanliness. Food wildlife replenishes according to suitable habitat under a small world-wide budget. Spawning and births use the same limits; excess animals migrate away instead of leaving carcass piles.
 - Start founders on adjacent habitable land; proximity enables interaction without forcing reproduction.
 - Load only Qwen, prefer full GPU offload, retain RAM/CPU fallback for allocation failures, and display actual residency. Inspect the shared Qwen model readiness. Keep each agent's private history intact; broader model comparisons are a later option.
 - Drag events onto a location in the land, with range and severity determined by the world simulation.
@@ -139,3 +139,9 @@ Add tools, skills, construction, property customs, beliefs, rituals, moral syste
 Add a world-wide model selector, natural event generation, drag-and-drop spectator events, replayable histories, time acceleration, and ways to inspect long-term changes.
 
 The current delivery and the remaining work for these stages are tracked in [implementation-status.md](implementation-status.md). The roadmap is not a claim that all proposed social institutions, tools, or evolutionary mechanisms already exist.
+
+## Family and food ecology revision
+
+Family planning must remain visible among feasible choices after immediate survival needs are met. Agents can approach partners and exchange persistent, expiring proposals instead of requiring identical choices in one decision round. Both adults still independently agree. Physical survival responses can meet urgent needs while the shared model is busy; they never fabricate consent or resources. Pregnancy takes 270 biological days and postpartum recovery takes 120 days. Infants travel with a living caregiver and learn later.
+
+Animals are small NPC food sources, secondary to the people. Healthy habitat determines the wildlife budget, capped at 24 wild animals; kept animals use a separate sustainable settlement allowance capped at 24. Natural spawning, reproduction, and migration enforce these budgets.

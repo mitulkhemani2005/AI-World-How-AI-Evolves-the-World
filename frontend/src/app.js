@@ -251,7 +251,7 @@ function drawCompatibilityGlobe() {
     const x = centerX + normal.dot(right) * radius;
     const y = centerY - normal.dot(up) * radius;
     context.beginPath();
-    context.arc(x, y, 6, 0, Math.PI * 2);
+    context.arc(x, y, 2.5, 0, Math.PI * 2);
     context.fillStyle = animal.animal_type === "wild" ? "#815b42" : "#b47b48";
     context.fill();
   }
@@ -463,7 +463,7 @@ function makeAnimal(animal) {
   const marker = new THREE.Mesh(new THREE.RingGeometry(0.20, 0.25, 24), new THREE.MeshBasicMaterial({ color: 0x997034, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
   marker.rotation.x = -Math.PI / 2; marker.position.y = 0.02; root.add(marker);
   root.userData.legs = legs;
-  root.scale.setScalar(["small_game", "hare", "chicken"].includes(animal.species) ? 1.8 : 2.4);
+  root.scale.setScalar(["small_game", "hare", "chicken"].includes(animal.species) ? 0.4 : 0.65);
   orientOnGlobe(root, animal.x, animal.y, 0.02);
   root.traverse((part) => { if (part.isMesh) { part.castShadow = true; part.userData.animalId = animal.id; } });
   animalGroup.add(root);
@@ -682,6 +682,8 @@ function syncObjects(nextWorld) {
     figure.userData.working = agent.alive && !["move", "rest", "drink", "bond", "reproduce"].includes(agent.last_action?.action);
     figure.userData.dead = !agent.alive;
     figure.userData.buried = agent.buried;
+    const lifeScale = agent.age_days < 3 * 365 ? 0.35 : agent.age_days < 12 * 365 ? 0.65 : 1;
+    figure.scale.setScalar(1.35 * lifeScale);
     figure.visible = !agent.buried;
     if (!agent.alive && !figure.userData.deathPoseApplied) {
       // Dead bodies remain visible on the surface until someone chooses to bury them.
@@ -705,7 +707,7 @@ function syncObjects(nextWorld) {
     const action = agent.last_action?.action?.replaceAll("_", " ");
     const intention = agent.pending_action?.action?.replaceAll("_", " ");
     label.textContent = agent.alive
-      ? `${agent.name} · ${action || "observing"}${intention && intention !== action ? ` → ${intention}` : ""}`
+      ? `${agent.name} · ${action || "observing"}${intention && intention !== action ? ` → ${intention}` : ""}${agent.pregnancy_days_remaining != null ? ` · expecting (${agent.pregnancy_days_remaining}d)` : ""}`
       : agent.buried ? `${agent.name} · buried` : `${agent.name} · deceased`;
     label.classList.toggle("selected", agent.id === selectedAgentId);
     label.classList.toggle("dead", !agent.alive);
@@ -896,6 +898,8 @@ function renderInspector() {
   const explanation = document.createElement("div");
   explanation.className = "action-explanation";
   explanation.textContent = [agent.last_action?.reason, agent.last_result,
+    agent.family_offer && agent.family_offer_until_tick >= world.tick ? `Family proposal: ${agent.family_offer.action} · waiting for an answer` : "",
+    agent.pregnancy_days_remaining != null ? `Birth in about ${Math.ceil(agent.pregnancy_days_remaining * (world.day_length_seconds || 60) / (world.time_scale || 1) / 60)} real minutes at current speed` : "",
     agent.construction_project ? `Project: ${agent.construction_project.replaceAll("_", " ")}` : "",
     agent.decision_source ? `Decision: ${agent.decision_source}${agent.intention_source ? ` (${agent.intention_source} intention)` : ""}` : ""].filter(Boolean).join(" · ");
   ui.inspector.querySelector(".detail-list")?.after(explanation);

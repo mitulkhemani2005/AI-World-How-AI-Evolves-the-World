@@ -8,7 +8,7 @@ import httpx
 
 from app.domain import Agent, AgentAction, WorldState
 from app.settings import settings
-from app.simulation.rules import ADULT_AGE_DAYS, BUILDING_RULES, SHELTER_KINDS
+from app.simulation.rules import ADULT_AGE_DAYS, BUILDING_RULES, SHELTER_KINDS, reproduction_block
 
 
 class OllamaError(RuntimeError):
@@ -79,11 +79,11 @@ class OllamaClient:
         observation = {
             "you": {key: full["agent"][key] for key in (
                 "name", "sex", "age_years", "health", "hunger", "thirst", "energy", "disease",
-                "memories", "knowledge", "inventory", "traits")},
+                "memories", "knowledge", "inventory", "traits", "pregnancy_days_remaining", "children")},
             "last_result": agent.last_result,
             "your_chosen_project": agent.construction_project,
             "biome": full["current_biome"], "weather": world.weather,
-            "local_people": [{key: person[key] for key in ("name", "distance", "alive", "age_years", "relationship")}
+            "local_people": [{key: person[key] for key in ("name", "distance", "alive", "age_years", "relationship", "family_offer", "is_your_bonded_partner")}
                              for person in full["nearby_agents"][:8]],
             "local_resources": full["visible_resources"][:12],
             "local_shelters": [item["kind"] for item in full["nearby_structures"]],
@@ -102,7 +102,10 @@ class OllamaClient:
             "You are this person's private mind. Choose one numbered opportunity using your own needs, "
             "traits, memories and relationships. 0 hunger/thirst is comfortable; 100 is critical. "
             "Continue useful work across turns: seek food/water, gather materials for shelter, care, learn, "
-            "cooperate or explore. The list is ordered by practical urgency, but the choice is yours. "
+            "cooperate, raise a family or explore. After meeting basic needs, consider bonding and having children "
+            "to continue your family. Answer a partner's family proposal when you want to accept it. "
+            "A proposal remains available for several turns; each person independently agrees. "
+            "The list is ordered by practical urgency, but the choice is yours. "
             "Finish useful work before switching goals. When materials for your chosen shelter are ready, build it. "
             "A resource choice includes walking there first. Bonding/reproduction need independent mutual "
             "consent. Do not invent success. If speaking or creating a group/belief, supply a short message; "
@@ -203,19 +206,21 @@ class OllamaClient:
                     add(33, "bury", f"Bury {person.name}", target_agent_id=person.id)
                 continue
             lesson = next((item for item in agent.knowledge if item not in person.knowledge), None)
+            offer = person.family_offer if person.family_offer_until_tick >= world.tick else None
+            answering = offer is not None and offer.target_agent_id == agent.id
+            # Reserve attention for a first family and for answering a partner, before optional projects.
+            if person.age_days >= ADULT_AGE_DAYS and agent.age_days >= ADULT_AGE_DAYS:
+                if person.bonded_partner_id != agent.id:
+                    add(13 if answering and offer.action == "bond" else 19, "bond",
+                        f"{'Answer the proposal to bond with' if answering else 'Propose a bond with'} {person.name}", target_agent_id=person.id)
+                if not reproduction_block(world, agent, person):
+                    priority = 13 if answering and offer.action == "reproduce" else 16 if agent.bonded_partner_id == person.id else 23
+                    add(priority, "reproduce", f"{'Accept the family proposal from' if answering else 'Plan a child with'} {person.name}", target_agent_id=person.id)
             if distance(person) <= 1:
                 if person.health < 75 or person.hunger > 45 or person.thirst > 45:
                     add(15 if person.id in agent.children_ids else 30, "help", f"Care for {person.name}", target_agent_id=person.id)
                 if lesson:
                     add(29, "teach", f"Teach {person.name}: {lesson}", target_agent_id=person.id, message=lesson)
-                if person.age_days >= ADULT_AGE_DAYS and person.bonded_partner_id != agent.id:
-                    add(45, "bond", f"Propose a bond with {person.name}", target_agent_id=person.id)
-                female = agent if agent.sex == "female" else person
-                if (person.sex != agent.sex and person.age_days >= ADULT_AGE_DAYS
-                    and female.pregnancy_days_remaining is None
-                    and min(person.health, agent.health) >= 60
-                    and max(person.hunger, person.thirst, agent.hunger, agent.thirst) < 60):
-                    add(48, "reproduce", f"Propose having a child with {person.name}", target_agent_id=person.id)
                 add(85, "fight", f"Confront {person.name}", target_agent_id=person.id)
             add(52, "communicate", f"Share an idea with {person.name}", target_agent_id=person.id,
                 message=f"I have learned {agent.knowledge[-1]}." if agent.knowledge else "We need food, water and shelter.")
@@ -307,6 +312,8 @@ class OllamaClient:
                 "age_years": other.age_years,
                 "relationship": round(agent.relationship_scores.get(other.id, 0)),
                 "is_your_bonded_partner": other.id == agent.bonded_partner_id,
+                "family_offer": other.family_offer.action if other.family_offer
+                    and other.family_offer.target_agent_id == agent.id and other.family_offer_until_tick >= world.tick else None,
                 "is_your_parent": other.id in agent.parent_ids,
                 "is_your_child": other.id in agent.children_ids,
                 "buried": other.buried,
@@ -458,7 +465,7 @@ class OllamaClient:
         if not nearby and "communicate" in actions:
             actions.discard("communicate")
         if not close:
-            for action in ("help", "teach", "bond", "reproduce", "fight"):
+            for action in ("help", "teach", "fight"):
                 if action in actions:
                     actions.discard(action)
         else:
@@ -466,14 +473,10 @@ class OllamaClient:
                 actions.discard("teach")
             if not any(person.health < 75 or person.hunger > 45 or person.thirst > 45 for person in close):
                 actions.discard("help")
-            adult_nearby = any(person.age_days >= ADULT_AGE_DAYS for person in close)
-            different_sex_adult_nearby = any(
-                person.sex != agent.sex and person.age_days >= ADULT_AGE_DAYS for person in close
-            )
-            if not adult_nearby:
-                actions.discard("bond")
-            if not different_sex_adult_nearby or agent.sex == "female" and agent.pregnancy_days_remaining is not None:
-                actions.discard("reproduce")
+        if not any(person.age_days >= ADULT_AGE_DAYS for person in nearby):
+            actions.discard("bond")
+        if not any(not reproduction_block(world, agent, person) for person in nearby):
+            actions.discard("reproduce")
         if agent.age_days < ADULT_AGE_DAYS:
             for action in ("build", "fight", "form_group", "bond", "reproduce", "hunt", "tame", "plant", "cook"):
                 if action in actions:

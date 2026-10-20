@@ -108,10 +108,12 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
     async def test_small_model_contract_uses_numbered_choices_and_validates_response(self):
         original_client = httpx.AsyncClient
         captured = []
+        choice = next(index for index, action in enumerate(OllamaClient.action_choices(
+            self.engine.state.agents[0], self.engine.state)) if action.action == "gather")
 
         def respond(request):
             captured.append(json.loads(request.content))
-            return httpx.Response(200, json={"message": {"content": '{"choice":0,"reason":"Build shelter"}'}})
+            return httpx.Response(200, json={"message": {"content": json.dumps({"choice": choice, "reason": "Build shelter"})}})
 
         with patch("app.agent_brain.ollama_client.httpx.AsyncClient", side_effect=lambda **kwargs:
                    original_client(transport=httpx.MockTransport(respond), **kwargs)):

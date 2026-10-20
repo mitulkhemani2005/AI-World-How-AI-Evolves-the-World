@@ -38,6 +38,9 @@ from app.simulation.rules import (
     PREGNANCY_DAYS,
     SHELTER_KINDS,
     TRAIT_NAMES,
+    FAMILY_OFFER_DAYS,
+    animal_capacity,
+    reproduction_block,
 )
 
 
@@ -54,6 +57,7 @@ class SimulationEngine:
         self._clock_task: asyncio.Task[None] | None = None
         self._clock_at: float | None = None
         self._decision_epoch = 0
+        self._reflex_at: dict[str, float] = {}
         self._tick_interval_seconds = settings.decision_interval_seconds
         self.state = self._store.load() or self._new_world(seed=7)
         self._upgrade_world_map(self.state)
@@ -79,6 +83,7 @@ class SimulationEngine:
             structure.y = min(max(structure.y, 0), self.state.height - 1)
         # Preserve the spectator's run/pause choice across application restarts.
         self.state.processing = False
+        self._rebalance_animals(self.state)
         self._save()
 
     def _new_world(self, seed: int) -> WorldState:
@@ -279,12 +284,13 @@ class SimulationEngine:
     def _seed_animals(self, world: WorldState) -> list[Animal]:
         """Seed wild species across suitable land and keep the starting settlement nearby."""
         habitat_cells = [cell for cell in world.terrain if cell.kind in {"grassland", "plains", "farmland", "forest", "rainforest", "boreal_forest"}]
-        species_by_habitat = {"grassland": "goat", "plains": "deer", "forest": "boar", "rainforest": "chicken", "boreal_forest": "hare", "farmland": "dog"}
+        species_by_habitat = {"grassland": "goat", "plains": "deer", "forest": "boar", "rainforest": "chicken", "boreal_forest": "hare", "farmland": "chicken"}
         animals: list[Animal] = []
         if not habitat_cells:
             return animals
-        for index, cell in enumerate(cell for cell in habitat_cells if self._random.random() < 0.25):
-            species = ("goat", "chicken", "dog", "deer", "boar", "hare")[index % 6]
+        budget = max(0, animal_capacity(world) - 3)
+        for index, cell in enumerate(self._random.sample(habitat_cells, min(budget, len(habitat_cells)))):
+            species = ("goat", "chicken", "deer", "boar", "hare")[index % 5]
             if cell.kind in {"rainforest", "boreal_forest"}:
                 species = species_by_habitat.get(cell.kind, species)
             animals.append(Animal(
@@ -295,7 +301,7 @@ class SimulationEngine:
             ))
         founder = world.agents[0]
         start_cell = min(habitat_cells, key=lambda cell: self._distance_to(cell.x, cell.y, founder.x, founder.y, world.width))
-        for species, dx in (("goat", -1), ("chicken", 1), ("dog", 0)):
+        for species, dx in (("goat", -1), ("chicken", 1), ("hare", 0)):
             animal_x, animal_y = self._nearest_land(world, (start_cell.x + dx) % world.width, start_cell.y)
             animals.append(Animal(id=str(uuid4()), species=species, sex=self._random.choice(("male", "female")),
                                   age_days=self._random.randint(200, 1200), x=animal_x,
@@ -308,6 +314,7 @@ class SimulationEngine:
                 was_running = self.state.running
                 self._clock_at = time.monotonic() if was_running else None
                 self._decision_epoch += 1
+                self._reflex_at.clear()
                 self.state = self._new_world(seed)
                 self.state.running = was_running
                 self._save()
@@ -405,6 +412,7 @@ class SimulationEngine:
                 random_state = self._random.getstate()
                 try:
                     self._advance_time(self.state, elapsed * self.state.time_scale)
+                    self._survival_reflexes(self.state, current)
                     self._move_animal_npcs(self.state)
                 except Exception as exc:
                     self.state = checkpoint
@@ -426,6 +434,34 @@ class SimulationEngine:
             for person in tuple(world.agents):
                 if person.alive:
                     self._advance_biology(world, person)
+
+    def _survival_reflexes(self, world: WorldState, now: float) -> None:
+        """Bodies can answer urgent needs while the shared model is busy thinking.
+
+        These explicit reflex records never create food, heal freely, or supply family consent.
+        Every move and meal still uses the same navigation and resource rules as an LLM action.
+        """
+        for person in tuple(world.agents):
+            if not person.alive or person.age_days < 3 * 365 or now - self._reflex_at.get(person.id, -10) < 0.8:
+                continue
+            children = [child for child in world.agents if child.alive and person.id in child.parent_ids
+                        and child.age_days < 3 * 365 and self._distance(person, child) <= 1]
+            hungry = max([person.hunger] + [child.hunger for child in children])
+            thirsty = max([person.thirst] + [child.thirst for child in children])
+            needs_recovery = person.health < 60 and person.last_rest_recovery_tick != world.tick
+            if max(hungry, thirsty) < 65 and person.energy > 10 and not needs_recovery:
+                continue
+            if thirsty >= 65 and (thirsty >= hungry or hungry < 65):
+                action = AgentAction(action="drink", reason="Innate survival response: seek water for urgent family thirst")
+            elif hungry >= 65:
+                action = AgentAction(action="forage", reason="Innate survival response: seek food for urgent family hunger")
+            else:
+                action = AgentAction(action="rest", reason="Innate survival response: rest during illness or exhaustion")
+            resolved = self._prepare_resource_action(world, person, action)
+            self._reflex_at[person.id] = now
+            person.decision_source = "reflex"
+            result = self._apply_action(world, person, resolved)
+            self._record_action(world, person, resolved, result, proposed_action=action if resolved.action != action.action else None)
 
     async def tick(self) -> WorldState:
         """Manually advance one complete simulated day and resolve one decision round."""
@@ -503,6 +539,12 @@ class SimulationEngine:
                         if person.id not in continuing_ids:
                             person.intention_source = "fallback" if person.id in fallback_errors else "llm"
                             person.decisions_made += 1
+                # Store each independent social choice before resolving pairs. It may be answered later.
+                for agent_id, action in proposals.items():
+                    person = next((person for person in world.agents if person.id == agent_id and person.alive), None)
+                    if person and self._adult(person) and action.action in {"bond", "reproduce"}:
+                        person.family_offer = action.model_copy(deep=True)
+                        person.family_offer_until_tick = world.tick + FAMILY_OFFER_DAYS
                 handled: set[str] = set()
                 for agent_id, action in proposals.items():
                     if agent_id in handled:
@@ -515,17 +557,28 @@ class SimulationEngine:
                     if action.action in {"bond", "reproduce"}:
                         agent.pending_action = None
                         partner_id = action.target_agent_id
-                        partner_action = proposals.get(partner_id or "")
                         partner = next((person for person in world.agents if person.id == partner_id and person.alive), None)
-                        mutual = partner is not None and partner_action is not None and partner_action.action == action.action and partner_action.target_agent_id == agent.id
+                        partner_action = partner.family_offer if partner and partner.family_offer_until_tick >= world.tick else None
+                        mutual = partner_action is not None and partner_action.action == action.action and partner_action.target_agent_id == agent.id
+                        if partner and self._distance(agent, partner) > 1:
+                            step = self._move_or_act(world, agent, partner, action.action, f"Approach {partner.name} for the family proposal")
+                            agent.pending_action = action.model_copy(deep=True) if step.action == "move" else None
+                            result = self._apply_action(world, agent, step)
+                            self._record_action(world, agent, step, result, proposed_action=action)
+                            handled.add(agent.id)
+                            continue
                         if mutual:
                             if action.action == "bond":
                                 self._resolve_bond(world, agent, partner)
                             else:
                                 self._resolve_reproduction(world, agent, partner)
+                            for person in (agent, partner):
+                                person.family_offer = None
+                                person.family_offer_until_tick = -1
+                                person.pending_action = None
                             handled.add(partner.id)
                         else:
-                            self._record_action(world, agent, action, "The other person did not independently agree.")
+                            self._record_action(world, agent, action, "Proposed a family choice; waiting for the partner's independent answer.")
                     else:
                         # Translate a resource-seeking choice into a path step when the resource is not underfoot.
                         resolved_action = self._prepare_corpse_action(world, agent, action)
@@ -663,6 +716,13 @@ class SimulationEngine:
             if (next_x, next_y) == (agent.x, agent.y):
                 return "Stayed in place; no movement step was proposed."
             agent.x, agent.y = next_x, next_y
+            # Infants travel with an available parent; they cannot navigate using an LLM yet.
+            for child in world.agents:
+                caregiver = next((parent_id for parent_id in child.parent_ids
+                                  if any(parent.id == parent_id and parent.alive for parent in world.agents)), None)
+                if (child.alive and child.age_days < 3 * 365 and agent.id == caregiver
+                    and (child.x, child.y) == ((agent.x - dx) % world.width, agent.y - dy)):
+                    child.x, child.y = agent.x, agent.y
             if cell and cell.kind == "mountain":
                 agent.energy = max(0, agent.energy - 3)
             return f"Moved to ({agent.x}, {agent.y})."
@@ -880,6 +940,8 @@ class SimulationEngine:
         return f"Hunted a {prey.species}; raw meat is available here."
 
     def _tame(self, world: WorldState, agent: Agent, animal_id: str | None) -> str:
+        if sum(animal.alive and animal.animal_type != "wild" for animal in world.animals) >= animal_capacity(world, wild=False):
+            return "There are already enough kept animals for the settlement to sustain."
         animal = next((item for item in world.animals if item.id == animal_id and item.alive), None)
         if not animal or animal.animal_type != "wild" or self._distance(agent, animal) > 1:
             return "There was no wild animal close enough to befriend."
@@ -1098,7 +1160,8 @@ class SimulationEngine:
         )
 
     def _give_birth(self, world: WorldState, mother: Agent) -> None:
-        father = self._get_agent(mother.other_parent_id) if mother.other_parent_id else None
+        # Death does not erase lineage or the other parent's inherited traits.
+        father = next((person for person in world.agents if person.id == mother.other_parent_id), None)
         if not mother.alive:
             mother.pregnancy_days_remaining = None
             return
@@ -1107,7 +1170,6 @@ class SimulationEngine:
             mother.other_parent_id = None
             self._record(world, EventSource.SYSTEM, EventKind.POPULATION_LIMIT, "A birth did not occur because the world reached its population limit.", [mother.id], {"population_limit": MAX_POPULATION})
             return
-        father = father if father and father.alive else None
         complicated_birth = bool(
             mother.health < 45 or mother.disease is not None
             or self._random.random() < 0.025
@@ -1146,6 +1208,7 @@ class SimulationEngine:
             parent.relationship_scores[child.id] = 50
             child.relationship_scores[parent.id] = 50
         world.agents.append(child)
+        mother.last_birth_tick = world.tick
         mother.pregnancy_days_remaining = None
         mother.other_parent_id = None
         self._record(world, EventSource.NATURAL, EventKind.BIRTH, f"{child.name} was born to {', '.join(p.name for p in parents)}.", [child.id, *[p.id for p in parents]], {"sex": sex, "inherited_traits": inherited, "complicated_birth": complicated_birth})
@@ -1175,6 +1238,7 @@ class SimulationEngine:
             elif node.kind == "water" and world.weather in {"rain", "flood"} and self._random.random() < 0.005:
                 node.contamination = min(100, node.contamination + self._random.uniform(2, 8))
 
+        self._rebalance_animals(world)
         self._advance_crops(world)
         self._advance_animals(world)
         self._spawn_wildlife(world)
@@ -1206,8 +1270,11 @@ class SimulationEngine:
             animal.x, animal.y = min(choices, key=lambda point: self._distance_to(*point, *target, world.width)) if target else self._random.choice(choices)
 
     def _spawn_wildlife(self, world: WorldState) -> None:
-        """Wildlife recolonizes suitable habitat; population follows habitat capacity, not a fixed total."""
-        species = {"forest": ("deer", "boar", "dog"), "rainforest": ("chicken", "boar"),
+        """Slowly replace missing food wildlife within a modest world-wide habitat budget."""
+        remaining = animal_capacity(world) - sum(animal.alive and animal.animal_type == "wild" for animal in world.animals)
+        if remaining <= 0 or world.tick % 7:
+            return
+        species = {"forest": ("deer", "boar", "hare"), "rainforest": ("chicken", "boar"),
                    "boreal_forest": ("hare", "deer"), "grassland": ("goat", "antelope"),
                    "plains": ("deer", "hare"), "farmland": ("chicken", "goat")}
         occupancy: dict[tuple[int, int], int] = {}
@@ -1216,6 +1283,8 @@ class SimulationEngine:
                 key = (animal.x, animal.y)
                 occupancy[key] = occupancy.get(key, 0) + 1
         for cell in world.terrain:
+            if remaining <= 0:
+                break
             capacity = max(1, int(cell.condition * cell.fertility / 3500))
             if (cell.kind not in species or cell.condition < 40 or cell.pollution > 60
                 or occupancy.get((cell.x, cell.y), 0) >= capacity or self._random.random() > 0.015):
@@ -1224,8 +1293,25 @@ class SimulationEngine:
                             sex=self._random.choice(("male", "female")), age_days=self._random.randint(100, 700),
                             x=cell.x, y=cell.y, temperament=self._random.uniform(0.1, 0.8))
             world.animals.append(animal)
+            remaining -= 1
             self._record(world, EventSource.NATURAL, EventKind.ANIMAL_SPAWNED,
                          f"A wild {animal.species} entered the habitat.", details={"animal_id": animal.id, "x": cell.x, "y": cell.y})
+
+    def _rebalance_animals(self, world: WorldState) -> None:
+        """Excess animals migrate out; do not leave hundreds of bodies or meat nodes behind."""
+        living_people = [person for person in world.agents if person.alive]
+        keep_ids = set()
+        for wild in (True, False):
+            animals = [animal for animal in world.animals if animal.alive and (animal.animal_type == "wild") == wild]
+            animals.sort(key=lambda animal: (animal.owner_agent_id is None,
+                min((self._distance(animal, person) for person in living_people), default=0), animal.id))
+            keep_ids.update(animal.id for animal in animals[:animal_capacity(world, wild=wild)])
+        removed = sum(animal.alive and animal.id not in keep_ids for animal in world.animals)
+        if removed:
+            world.animals = [animal for animal in world.animals if not animal.alive or animal.id in keep_ids]
+            self._record(world, EventSource.NATURAL, EventKind.NATURAL_EVENT,
+                         "Excess wildlife migrated away as the habitat reached its animal budget.",
+                         details={"event": "wildlife_migration", "migrated": removed})
 
     def _advance_crops(self, world: WorldState) -> None:
         for plot in world.crops:
@@ -1334,9 +1420,13 @@ class SimulationEngine:
                 self._record(world, EventSource.NATURAL, EventKind.DEATH,
                              f"A {animal.species} died from illness or unmet needs.", [],
                              {"animal_id": animal.id, "species": animal.species})
-            elif animal.hunger < 45 and self._random.random() < (0.001 if animal.animal_type == "wild" else 0.0006):
+            elif (animal.sex == "female" and animal.age_days >= 180 and world.tick - animal.last_birth_tick >= 120
+                  and animal.hunger < 45 and animal.thirst < 60
+                  and sum(item.alive and (item.animal_type == "wild") == (animal.animal_type == "wild")
+                          for item in world.animals) < animal_capacity(world, wild=animal.animal_type == "wild")
+                  and self._random.random() < (0.001 if animal.animal_type == "wild" else 0.0006)):
                 mate = next((other for other in living if other.id != animal.id and other.alive
-                             and other.species == animal.species and other.sex != animal.sex
+                             and other.species == animal.species and other.sex != animal.sex and other.age_days >= 180
                              and other.animal_type == animal.animal_type
                              and (animal.animal_type == "wild" or other.owner_agent_id == animal.owner_agent_id)
                              and self._distance_to(animal.x, animal.y, other.x, other.y) <= 1), None)
@@ -1349,6 +1439,7 @@ class SimulationEngine:
                         x=animal.x, y=animal.y, hunger=10, temperament=self._random.uniform(0.2, 0.7),
                     )
                     world.animals.append(offspring)
+                    animal.last_birth_tick = world.tick
                     self._record(world, EventSource.NATURAL, EventKind.ANIMAL_BIRTH,
                                  f"A {offspring.species} was born.", [],
                                  {"animal_id": offspring.id, "species": offspring.species,
@@ -1356,17 +1447,21 @@ class SimulationEngine:
                                   "parent_ids": [animal.id, mate.id]})
 
     def _regenerate_resources(self, world: WorldState) -> None:
-        if world.tick % 7:
-            return
         for node in world.resources:
+            previous_quantity = node.quantity
             if node.kind in {"food", "fruit", "vegetable"}:
+                if world.tick % 7:
+                    continue
                 biome = self._terrain_at(world, node.x, node.y)
                 growth = (1 if world.season == "winter" else 3) if biome and biome.kind in {"grassland", "plains", "forest", "rainforest", "boreal_forest", "river", "lake"} else 0
                 node.quantity = min(node.capacity, node.quantity + growth)
             elif node.kind == "water":
                 node.quantity = min(node.capacity, node.quantity + (2 if world.season == "summer" else 5))
-            elif node.kind == "wood" and world.season != "winter":
+            elif node.kind == "wood" and world.season != "winter" and world.tick % 7 == 0:
                 node.quantity = min(node.capacity, node.quantity + 1)
+            # Spring water renews daily; new growth does not inherit all the old stock's spoilage.
+            if node.quantity > previous_quantity and node.kind in {"food", "fruit", "vegetable", "water"}:
+                node.contamination *= previous_quantity / node.quantity
 
     def _natural_events(self, world: WorldState) -> None:
         if self._random.random() < settings.disease_emergence_probability:
@@ -1494,16 +1589,11 @@ class SimulationEngine:
     def _resolve_reproduction(self, world: WorldState, first: Agent, second: Agent) -> None:
         female = first if first.sex == "female" else second if second.sex == "female" else None
         male = first if first.sex == "male" else second if second.sex == "male" else None
-        if not female or not male or not self._adult(female) or not self._adult(male):
-            result = "Reproduction was not biologically possible for this pair."
+        blocked = reproduction_block(world, first, second)
+        if blocked:
+            result = blocked
         elif self._distance(female, male) > 1:
             result = "The two people were too far apart."
-        elif female.pregnancy_days_remaining is not None:
-            result = f"{female.name} is already pregnant."
-        elif sum(person.alive for person in world.agents) >= MAX_POPULATION:
-            result = f"The world has reached its population limit of {MAX_POPULATION}."
-        elif min(female.health, male.health) < 35 or max(female.hunger, male.hunger, female.thirst, male.thirst) > 90:
-            result = "Their health or immediate needs made reproduction unsafe."
         else:
             female.pregnancy_days_remaining = PREGNANCY_DAYS
             female.other_parent_id = male.id
@@ -1791,6 +1881,8 @@ class SimulationEngine:
         if start == goal:
             return AgentAction(action=action, reason=reason, resource_kind=resource_kind)
         # Breadth-first pathfinding follows habitable spherical cells and routes around oceans.
+        # Index once per route; scanning all 648 cells for every neighbor stalls fast body updates.
+        terrain_kinds = {(cell.x, cell.y): cell.kind for cell in world.terrain}
         queue = [start]
         previous: dict[tuple[int, int], tuple[int, int] | None] = {start: None}
         for current in queue:
@@ -1802,8 +1894,7 @@ class SimulationEngine:
                 nx, ny = neighbor
                 if not (0 <= ny < world.height) or neighbor in previous:
                     continue
-                terrain = self._terrain_at(world, nx, ny)
-                if terrain and terrain.kind == "ocean":
+                if terrain_kinds.get(neighbor) == "ocean":
                     continue
                 previous[neighbor] = current
                 queue.append(neighbor)

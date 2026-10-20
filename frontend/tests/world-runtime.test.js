@@ -138,6 +138,7 @@ test("a populated world renders continuing frames, moves people/animals, and upd
   assert.ok(figure.position.distanceTo(app.worldToScene(18, 8, 0.28)) < 1e-6);
   assert.ok(app.labels.get("Aru").textContent.includes("move"));
   const animal = app.sceneObjects.get("animal-goat");
+  assert.ok(animal.scale.x <= 0.65, "food NPCs stay much smaller than people");
   assert.ok(animal.position.distanceTo(app.worldToScene(20, 8, 0.02)) < 1e-6);
   const distance = app.camera.position.distanceTo(app.controls.target);
   app.zoomView(0.8);

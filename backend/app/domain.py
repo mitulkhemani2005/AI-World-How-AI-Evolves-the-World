@@ -149,6 +149,7 @@ class Animal(BaseModel):
     last_product_tick: int = -1
     last_care_tick: int = -1
     death_tick: int | None = None
+    last_birth_tick: int = -10000
 
 
 class CropPlot(BaseModel):
@@ -194,16 +195,20 @@ class Agent(BaseModel):
     bonded_partner_id: str | None = None
     pregnancy_days_remaining: int | None = None
     other_parent_id: str | None = None
+    # A partner may independently answer a proposal on a later turn; consent expires.
+    family_offer: AgentAction | None = None
+    family_offer_until_tick: int = -1
+    last_birth_tick: int = -10000
     parent_ids: list[str] = Field(default_factory=list)
     children_ids: list[str] = Field(default_factory=list)
     last_action: AgentAction | None = None
     last_result: str = ""
-    decision_source: Literal["llm", "fallback", "continuation", "dependent"] = "dependent"
+    decision_source: Literal["llm", "fallback", "continuation", "dependent", "reflex"] = "dependent"
     visited_cells: list[str] = Field(default_factory=list)
     # A brain-selected resource/care intention continues while the body walks to its target.
     pending_action: AgentAction | None = None
     construction_project: str | None = None
-    intention_source: Literal["llm", "fallback", "dependent"] = "dependent"
+    intention_source: Literal["llm", "fallback", "dependent", "reflex"] = "dependent"
     decisions_made: int = 0
     last_rest_recovery_tick: int = -1
     last_care_tick: int = -1

@@ -11,6 +11,7 @@ import test_world as fixtures
 from app.agent_brain.ollama_client import OllamaClient
 from app.domain import AgentAction, Animal, EventKind
 from app.simulation.engine import SimulationEngine
+from app.simulation.rules import animal_capacity
 
 
 class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
@@ -51,9 +52,13 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
     async def test_wildlife_spawn_and_npc_movement(self):
         world = self.engine.state
         world.animals = [Animal(id=f"npc-{index}", species="goat", sex="female", x=0, y=0) for index in range(205)]
+        self.engine._rebalance_animals(world)
+        self.assertLessEqual(len(world.animals), animal_capacity(world))
+        world.animals = world.animals[:2]
         with patch.object(self.engine._random, "random", return_value=0):
             self.engine._spawn_wildlife(world)
-            self.assertGreater(len(world.animals), 205, "habitat spawning must not stop at a global 200-animal cap")
+            self.assertGreater(len(world.animals), 2, "missing food wildlife can repopulate")
+            self.assertLessEqual(len(world.animals), animal_capacity(world))
             self.assertTrue(any(event.kind == EventKind.ANIMAL_SPAWNED for event in world.events))
             before = [(animal.x, animal.y) for animal in world.animals]
             self.engine._move_animal_npcs(world)
@@ -108,16 +113,19 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
     async def test_failed_round_retries_without_stopping(self):
         original = self.engine._tick_once
         calls = 0
+        retried = asyncio.Event()
         async def once(*args, **kwargs):
             nonlocal calls
             calls += 1
             if calls == 1:
                 raise RuntimeError("temporary action failure")
+            retried.set()
             return await original(*args, **kwargs)
         self.engine._tick_once = once
         self.engine._ollama.decide = AsyncMock(return_value=AgentAction(action="rest"))
         await self.engine.start(0.5)
-        await asyncio.sleep(3)
+        # Wait for the actual retry so a busy Windows filesystem cannot make a fixed sleep flaky.
+        await asyncio.wait_for(retried.wait(), timeout=8)
         self.assertGreaterEqual(calls, 2)
         self.assertTrue(self.engine.state.running)
         self.assertTrue(any(event.kind == EventKind.SIMULATION_ERROR and event.details.get("recoverable") for event in self.engine.state.events))
