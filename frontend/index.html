@@ -13,7 +13,8 @@
         <a class="brand" href="#" aria-label="Origin home"><span class="brand-mark">O</span><span><b>ORIGIN</b><small>A WORLD WITHOUT A SCRIPT</small></span></a>
         <div class="world-state"><span class="live-dot"></span><span id="clock-label">CONNECTING TO WORLD</span></div>
         <div class="top-actions">
-          <label class="model-picker"><span>WORLD BRAIN</span><select id="model-select" aria-label="Shared model for all agents"></select></label>
+          <label class="model-picker"><span id="compute-status">QWEN · GPU FIRST</span><select id="model-select" aria-label="Shared model for all agents"></select></label>
+          <label class="speed-picker"><span>WORLD SPEED</span><select id="speed-select" aria-label="Simulation speed"><option value="auto">Auto 2× → 8×</option><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option><option value="16">16×</option></select></label>
           <button id="run-button" class="icon-button run-button" title="Run or pause the simulation">▶</button>
           <button id="step-button" class="icon-button" title="Advance one day">+1</button>
           <button id="reset-world" class="icon-button" title="Start a new world">↺</button>
@@ -24,13 +25,14 @@
         <div class="world-caption"><span class="eyebrow">A FICTIONAL LIVING WORLD</span><h1>Life finds a way.</h1><p id="world-summary">Two lives. One world. No human guidance.</p></div>
         <div id="world-scene" class="world-scene" aria-label="Drag to orbit the fictional globe, scroll to zoom, click a person to inspect"></div>
         <div id="scene-status" class="scene-status" role="status">Loading the living world…</div>
+        <div id="world-tooltip" class="world-tooltip" role="tooltip" hidden></div>
         <nav class="view-controls" aria-label="World camera">
           <button id="view-people" type="button">People</button>
           <button id="view-world" type="button">Globe</button>
           <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
           <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
         </nav>
-        <div class="world-hint"><span>DRAG TO ORBIT</span><i></i><span>SCROLL TO ZOOM</span><i></i><span>CLICK A PERSON · LABELS SHOW ACTIONS</span></div>
+        <div class="world-hint"><span>DRAG TO ORBIT</span><i></i><span>SCROLL TO ZOOM</span><i></i><span>HOVER TO INSPECT · CLICK A PERSON</span></div>
 
         <aside class="world-hud" aria-label="World conditions">
           <div class="hud-stat"><strong id="population-label">—</strong><span>ALIVE</span></div>

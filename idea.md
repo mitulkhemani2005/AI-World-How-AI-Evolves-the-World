@@ -91,7 +91,7 @@ The separate white-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
-- Advance one biological day every 60 seconds of real elapsed running time, independently of model latency. As requested in the later clock revision, visible sunlight and the local clock follow the spectator's computer time; simulated year/day are displayed separately. Agents can act several times during a biological day.
+- Advance biology from elapsed real running time, independently of model latency. A biological day takes 60 seconds at 1x; Auto defaults to 2x -> 4x -> 8x, doubling every two running minutes. Fixed speeds up to 16x are available. As requested in the later clock revision, visible sunlight and the local clock follow the spectator's computer time; simulated year/day are displayed separately. Agents can act several times during a biological day.
 - Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
 - Keep dead bodies visible on the ground. Nearby relatives receive the death in their memories and decide whether to mourn, bury, or attend to other needs. Burial leaves a grave marker.
 - Give animals hardcoded NPC behavior for movement, feeding, watering, health, illness, reproduction, and death. Animals do not make LLM calls.
@@ -99,8 +99,11 @@ The separate white-themed frontend should let the spectator:
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.
 - Review world records from the API for births, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters. Keep the main spectator free of a visible timeline.
-- Pause, resume, or advance one day.
-- Inspect the shared Qwen model readiness. Keep each agent's private history intact; broader model comparisons are a later option.
+- Pause, resume, or advance one day. Only explicit pause stops a running world: interventions, extinction, and recoverable errors must not stop its clock or ecosystem. Persist the run/pause choice through backend restarts.
+- Hover world objects for details, animate events at their location, make animals prominent without population counters, and protect the camera from entering terrain.
+- Let agents choose to restore habitat health, fertility, and resource cleanliness. Wildlife spawns according to suitable habitat rather than a global quota.
+- Start founders on adjacent habitable land; proximity enables interaction without forcing reproduction.
+- Load only Qwen, prefer full GPU offload, retain RAM/CPU fallback for allocation failures, and display actual residency. Inspect the shared Qwen model readiness. Keep each agent's private history intact; broader model comparisons are a later option.
 - Drag events onto a location in the land, with range and severity determined by the world simulation.
 
 ## Guiding principles

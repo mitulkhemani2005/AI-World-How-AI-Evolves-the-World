@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import asyncio
 import os
 
 from fastapi import FastAPI
@@ -9,9 +10,14 @@ from app.simulation.engine import engine
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    """Stop the tick loop cleanly while leaving the last world snapshot saved."""
+    """Preserve the user's run choice and warm the shared Qwen model on GPU."""
+    warmup = asyncio.create_task(engine._ollama.warm_model())
+    if engine.state.running:
+        await engine.start()
     yield
-    await engine.pause()
+    warmup.cancel()
+    await asyncio.gather(warmup, return_exceptions=True)
+    await engine.shutdown()
 
 app = FastAPI(
     title="AI World API",

@@ -12,7 +12,10 @@ class Settings:
     # The simulation intentionally pins one shared, small Qwen brain for every person.
     ollama_model = "qwen2.5:0.5b"
     ollama_timeout_seconds = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "20"))
-    decision_interval_seconds = float(os.getenv("DECISION_INTERVAL_SECONDS", "2.5"))
+    decision_interval_seconds = float(os.getenv("DECISION_INTERVAL_SECONDS", "1.2"))
+    # Request all layers on GPU; a GPU allocation failure may retry once using RAM/CPU.
+    ollama_gpu_layers = 999
+    auto_acceleration_seconds = float(os.getenv("AUTO_ACCELERATION_SECONDS", "120"))
     day_length_seconds = float(os.getenv("DAY_LENGTH_SECONDS", "60"))
     natural_event_probability = float(os.getenv("NATURAL_EVENT_PROBABILITY", "0.01"))
     disease_emergence_probability = float(os.getenv("DISEASE_EMERGENCE_PROBABILITY", "0.002"))

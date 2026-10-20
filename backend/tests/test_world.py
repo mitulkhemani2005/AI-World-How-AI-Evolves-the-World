@@ -119,6 +119,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(action.action, "gather")
         self.assertEqual(action.resource_kind, "wood")
         self.assertEqual(captured[0]["model"], "qwen2.5:0.5b")
+        self.assertEqual(captured[0]["options"]["num_gpu"], 999)
         self.assertGreaterEqual(captured[0]["options"]["num_predict"], 128)
         self.assertNotIn("target_agent_id", captured[0]["format"]["properties"])
 
@@ -252,6 +253,11 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.status_code, 200)
                 self.assertEqual(result.json()["tick"], 1)
                 self.assertTrue((await client.post("/api/world/run")).json()["running"])
+                speed = await client.patch("/api/world/speed", json={"time_scale": 4, "auto_accelerate": False})
+                self.assertEqual(speed.json()["time_scale"], 4)
+                self.assertTrue(speed.json()["running"])
+                result = await client.post("/api/events", json={"kind": "storm", "x": 0, "y": 0})
+                self.assertTrue(result.json()["running"], "an intervention must never pause the world")
                 self.assertFalse((await client.post("/api/world/pause")).json()["running"])
 
 

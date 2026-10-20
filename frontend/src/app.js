@@ -1,6 +1,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { interpolateSurfacePosition } from "./surface-motion.js";
+import { WorldEffects } from "./world-effects.js";
+import { describeWorldHit } from "./world-inspection.js";
 import "./styles.css";
 
 // The frontend is a spectator only; FastAPI remains the source of world state and rules.
@@ -18,6 +20,10 @@ let isStepping = false;
 let draggedEvent = null;
 let toastTimeout = null;
 let followingAgentId = null;
+let hoverPointer = null;
+let lastHoverAt = 0;
+let terrainHealthSignature = "";
+let armedEvent = null;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
@@ -93,7 +99,8 @@ controls.enablePan = false;
 controls.panSpeed = 0.45;
 controls.minDistance = 11;
 controls.maxDistance = 40;
-controls.maxPolarAngle = Math.PI;
+controls.minPolarAngle = 0.06;
+controls.maxPolarAngle = Math.PI - 0.06;
 
 const skyLight = new THREE.HemisphereLight(0xf4f7ff, 0x66705e, 1.55);
 scene.add(skyLight);
@@ -113,6 +120,7 @@ const resourceGroup = new THREE.Group(); scene.add(resourceGroup);
 const structureGroup = new THREE.Group(); scene.add(structureGroup);
 const animalGroup = new THREE.Group(); scene.add(animalGroup);
 const cropGroup = new THREE.Group(); scene.add(cropGroup);
+const worldEffects = new WorldEffects(scene, worldToScene);
 const labels = new Map();
 const peopleMeshes = new Map();
 const sceneObjects = new Map();
@@ -163,6 +171,14 @@ function sceneToWorld(point) {
   };
 }
 
+function compatibilityFrame() {
+  const direction = camera.position.clone().normalize();
+  const pole = Math.abs(direction.y) > 0.98 ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(pole, direction).normalize();
+  return { direction, right, up: new THREE.Vector3().crossVectors(direction, right).normalize(),
+    radius: Math.max(40, Math.min(host.clientWidth * 0.45, host.clientHeight * 0.39) * (29 / camera.position.length())) };
+}
+
 function drawCompatibilityGlobe() {
   if (!fallbackContext) return;
   const context = fallbackContext;
@@ -170,7 +186,7 @@ function drawCompatibilityGlobe() {
   const height = host.clientHeight;
   const centerX = width / 2;
   const centerY = height / 2;
-  const radius = Math.max(40, Math.min(width * 0.45, height * 0.39) * (29 / camera.position.length()));
+  const { radius, direction: cameraDirection, right, up } = compatibilityFrame();
   context.clearRect(0, 0, width, height);
   context.fillStyle = "#f4f5f1";
   context.fillRect(0, 0, width, height);
@@ -188,9 +204,6 @@ function drawCompatibilityGlobe() {
   context.arc(centerX, centerY, radius, 0, Math.PI * 2);
   context.clip();
 
-  const cameraDirection = camera.position.clone().normalize();
-  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
-  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
   const colors = {
     plains: "#d0bd82", grassland: "#98ad63", farmland: "#c4ac69", forest: "#4d7654",
     rainforest: "#347954", boreal_forest: "#66866c", mountain: "#929790", desert: "#d4ad70",
@@ -238,10 +251,26 @@ function drawCompatibilityGlobe() {
     const x = centerX + normal.dot(right) * radius;
     const y = centerY - normal.dot(up) * radius;
     context.beginPath();
-    context.arc(x, y, 3.5, 0, Math.PI * 2);
+    context.arc(x, y, 6, 0, Math.PI * 2);
     context.fillStyle = animal.animal_type === "wild" ? "#815b42" : "#b47b48";
     context.fill();
   }
+  // Compatibility mode also visualizes interventions without touching the simulation clock.
+  for (const effect of worldEffects.active.values()) {
+    const normal = effect.group.position.clone().normalize();
+    if (normal.dot(cameraDirection) <= 0) continue;
+    const x = centerX + normal.dot(right) * radius, y = centerY - normal.dot(up) * radius;
+    context.beginPath();
+    context.arc(x, y, Math.max(8, effect.ring.scale.x * radius * 0.025), 0, Math.PI * 2);
+    context.strokeStyle = `#${effect.material.color.getHexString()}`;
+    context.globalAlpha = effect.material.opacity;
+    context.lineWidth = 4;
+    context.stroke();
+    context.fillStyle = context.strokeStyle;
+    context.font = "bold 12px sans-serif";
+    context.fillText(effect.kind.replaceAll("_", " "), x + 12, y - 12);
+  }
+  context.globalAlpha = 1;
   context.restore();
   context.beginPath();
   context.arc(centerX, centerY, radius, 0, Math.PI * 2);
@@ -328,6 +357,7 @@ function createTerrain(nextWorld = null) {
 
 function addTree(x, z, scale = 1) {
   const group = new THREE.Group();
+  group.userData.isLand = true;
   const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.16, 0.82, 7), new THREE.MeshStandardMaterial({ color: 0x73543b, roughness: 1 }));
   trunk.position.y = 0.41;
   const foliage = new THREE.Mesh(new THREE.IcosahedronGeometry(0.59, 1), new THREE.MeshStandardMaterial({ color: 0x536d48, roughness: 1, flatShading: true }));
@@ -406,12 +436,35 @@ function makeAnimal(animal) {
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 9, 7), fur);
   head.position.set(0, 0.34, 0.22);
   root.add(body, head);
+  const legs = [];
   for (const side of [-1, 1]) for (const forward of [-1, 1]) {
     const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.2, 5), fur);
     leg.position.set(side * 0.07, 0.13, forward * 0.11);
     root.add(leg);
+    leg.userData.phase = side * forward > 0 ? 0 : Math.PI;
+    legs.push(leg);
   }
-  root.scale.setScalar(["small_game", "hare", "chicken"].includes(animal.species) ? 0.72 : 1);
+  if (["deer", "antelope", "goat"].includes(animal.species)) {
+    for (const side of [-1, 1]) {
+      const horn = new THREE.Mesh(new THREE.ConeGeometry(0.035, animal.species === "deer" ? 0.3 : 0.18, 5), fur);
+      horn.position.set(side * 0.06, 0.49, 0.22); horn.rotation.z = side * 0.25; root.add(horn);
+    }
+  }
+  if (["hare", "dog"].includes(animal.species)) {
+    for (const side of [-1, 1]) {
+      const ear = new THREE.Mesh(new THREE.CapsuleGeometry(0.025, animal.species === "hare" ? 0.2 : 0.06, 3, 5), fur);
+      ear.position.set(side * 0.055, 0.47, 0.22); root.add(ear);
+    }
+  }
+  if (animal.species === "chicken") {
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 4), new THREE.MeshBasicMaterial({ color: 0xe7a43d }));
+    beak.rotation.x = Math.PI / 2; beak.position.set(0, 0.35, 0.33); root.add(beak);
+  }
+  const marker = new THREE.Mesh(new THREE.RingGeometry(0.20, 0.25, 24), new THREE.MeshBasicMaterial({ color: 0x997034, transparent: true, opacity: 0.7, side: THREE.DoubleSide }));
+  marker.rotation.x = -Math.PI / 2; marker.position.y = 0.02; root.add(marker);
+  root.userData.legs = legs;
+  root.scale.setScalar(["small_game", "hare", "chicken"].includes(animal.species) ? 1.8 : 2.4);
+  orientOnGlobe(root, animal.x, animal.y, 0.02);
   root.traverse((part) => { if (part.isMesh) { part.castShadow = true; part.userData.animalId = animal.id; } });
   animalGroup.add(root);
   sceneObjects.set("animal-" + animal.id, root);
@@ -437,6 +490,7 @@ function createCrop(plot) {
 
 function createResource(node) {
   const group = new THREE.Group();
+  group.userData.resource = { kind: node.kind, x: node.x, y: node.y };
   orientOnGlobe(group, node.x, node.y);
   const size = Math.max(0.5, Math.min(1.2, node.quantity / 18));
   if (["food", "fruit", "vegetable"].includes(node.kind)) {
@@ -465,6 +519,7 @@ function createResource(node) {
 
 function createStructure(building) {
   const group = new THREE.Group();
+  group.userData.structureId = building.id;
   const wood = new THREE.MeshStandardMaterial({ color: 0x947652, roughness: 1 });
   const roof = new THREE.MeshStandardMaterial({ color: 0x534a3d, roughness: 1, flatShading: true });
   orientOnGlobe(group, building.x, building.y);
@@ -504,6 +559,29 @@ function createStructure(building) {
 createTerrain();
 seedScenery();
 
+function updateTerrainHealth(nextWorld) {
+  const signature = nextWorld.id + (nextWorld.terrain || []).map((cell) => `${Math.round(cell.condition ?? 100)}:${Math.round(cell.pollution || 0)}`).join(",");
+  if (signature === terrainHealthSignature || !terrainMesh) return;
+  terrainHealthSignature = signature;
+  const positions = terrainMesh.geometry.attributes.position;
+  let colors = terrainMesh.geometry.attributes.color;
+  if (!colors) {
+    colors = new THREE.BufferAttribute(new Float32Array(positions.count * 3), 3);
+    terrainMesh.geometry.setAttribute("color", colors);
+    terrainMesh.material.vertexColors = true;
+    terrainMesh.material.needsUpdate = true;
+  }
+  const point = new THREE.Vector3();
+  for (let index = 0; index < positions.count; index++) {
+    point.fromBufferAttribute(positions, index);
+    const location = sceneToWorld(point);
+    const cell = terrainAt(location.x, location.y);
+    const damage = THREE.MathUtils.clamp((100 - (cell?.condition ?? 100)) / 100 + (cell?.pollution || 0) / 200, 0, 1);
+    colors.setXYZ(index, 1 - damage * 0.25, 1 - damage * 0.48, 1 - damage * 0.50);
+  }
+  colors.needsUpdate = true;
+}
+
 function resizeScene() {
   const width = Math.max(host.clientWidth, 1); const height = Math.max(host.clientHeight, 1);
   renderer.setSize(width, height, false);
@@ -535,7 +613,9 @@ function focusPopulation(nextWorld = world) {
   controls.target.copy(position);
   controls.minDistance = 3;
   controls.maxDistance = 40;
-  camera.position.copy(position).addScaledVector(normal, 10).add(new THREE.Vector3(0, 3, 0));
+  const tangentUp = new THREE.Vector3(0, 1, 0).addScaledVector(normal, -normal.y);
+  if (tangentUp.lengthSq() < 0.001) tangentUp.set(1, 0, 0);
+  camera.position.copy(position).addScaledVector(normal, 10).addScaledVector(tangentUp.normalize(), 4);
   controls.update();
 }
 
@@ -544,6 +624,22 @@ function zoomView(factor) {
   const distance = THREE.MathUtils.clamp(offset.length() * factor, controls.minDistance, controls.maxDistance);
   camera.position.copy(controls.target).add(offset.normalize().multiplyScalar(distance));
   controls.update();
+  constrainCamera();
+}
+
+function constrainCamera() {
+  if (followingAgentId && controls.target.length() > globeRadius * 0.8) {
+    const normal = controls.target.clone().normalize();
+    const offset = camera.position.clone().sub(controls.target);
+    const outward = offset.dot(normal);
+    if (outward < 2) camera.position.addScaledVector(normal, 2 - outward);
+  }
+  const direction = camera.position.clone().normalize();
+  if (direction.lengthSq() === 0) direction.set(0, 0, 1);
+  const location = sceneToWorld(direction);
+  const clearance = surfaceRadius(terrainAt(location.x, location.y)) + 1.3;
+  if (camera.position.length() < clearance) camera.position.copy(direction.multiplyScalar(clearance));
+  camera.lookAt(controls.target);
 }
 $("#view-world").addEventListener("click", showWholeWorld);
 $("#view-people").addEventListener("click", () => focusPopulation());
@@ -553,10 +649,16 @@ $("#zoom-out").addEventListener("click", () => zoomView(1.25));
 function syncObjects(nextWorld) {
   worldWidth = nextWorld.width;
   worldHeight = nextWorld.height;
+  terrainCells = new Map((nextWorld.terrain || []).map((cell) => [cell.x + ":" + cell.y, cell]));
   if (terrainWorldId !== nextWorld.id) createTerrain(nextWorld);
+  updateTerrainHealth(nextWorld);
+  worldEffects.sync(nextWorld, performance.now());
   if (currentWorldId !== nextWorld.id) {
     currentWorldId = nextWorld.id; selectedAgentId = null;
     for (const label of labels.values()) label.remove();
+    for (const group of [peopleGroup, resourceGroup, structureGroup, animalGroup, cropGroup]) {
+      for (const child of [...group.children]) disposeSceneObject(child);
+    }
     labels.clear(); peopleMeshes.clear(); sceneObjects.clear();
     peopleGroup.clear(); resourceGroup.clear(); structureGroup.clear(); animalGroup.clear(); cropGroup.clear();
     seedScenery();
@@ -595,6 +697,7 @@ function syncObjects(nextWorld) {
       inscription.position.y = 0.37; grave.add(inscription);
       orientOnGlobe(grave, agent.x, agent.y, 0.05);
       grave.traverse((part) => { if (part.isMesh) part.castShadow = true; });
+      grave.userData.agentId = agent.id;
       peopleGroup.add(grave); figure.userData.graveMarker = grave;
     }
     figure.userData.selectionRing.visible = agent.alive && agent.id === selectedAgentId;
@@ -643,15 +746,28 @@ function syncObjects(nextWorld) {
       || (key.startsWith("structure-") && !desiredStructures.has(key))
       || (key.startsWith("animal-") && !desiredAnimals.has(key))
       || (key.startsWith("crop-") && !desiredCrops.has(key))) {
-      object.removeFromParent(); sceneObjects.delete(key);
+      disposeSceneObject(object); sceneObjects.delete(key);
     }
   }
+}
+
+// Wildlife continuously spawns and dies; release GPU resources when its visual leaves the scene.
+function disposeSceneObject(object) {
+  const geometries = new Set(), materials = new Set();
+  object.traverse((part) => {
+    if (part.geometry) geometries.add(part.geometry);
+    if (part.material) materials.add(part.material);
+  });
+  for (const geometry of geometries) geometry.dispose();
+  for (const material of materials) material.dispose();
+  object.removeFromParent();
 }
 
 function renderLabels() {
   const projected = new THREE.Vector3();
   for (const [id, figure] of peopleMeshes) {
     const label = labels.get(id);
+    if (fallbackContext) { label.style.display = "none"; continue; }
     projected.copy(figure.position).add(figure.position.clone().normalize().multiplyScalar(1.85)).project(camera);
     const x = (projected.x * 0.5 + 0.5) * host.clientWidth;
     const y = (-projected.y * 0.5 + 0.5) * host.clientHeight;
@@ -672,6 +788,7 @@ function renderFrame(now) {
     camera.position.add(shift);
   }
   controls.update();
+  constrainCamera();
   // Labels and picking use the same current camera transform as the rendered frame.
   camera.updateMatrixWorld(true);
   camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
@@ -680,7 +797,8 @@ function renderFrame(now) {
     if (!destination) continue;
     // Smoothstep along the globe surface keeps each person grounded during travel.
     const start = figure.userData.travelStart || destination;
-    const rawProgress = THREE.MathUtils.clamp((now - (figure.userData.travelStartedAt ?? now)) / 1050, 0, 1);
+    const duration = Math.max(280, 1050 / Math.sqrt(world?.time_scale || 1));
+    const rawProgress = THREE.MathUtils.clamp((now - (figure.userData.travelStartedAt ?? now)) / duration, 0, 1);
     const progress = rawProgress * rawProgress * (3 - 2 * rawProgress);
     interpolateSurfacePosition(start, destination, progress, 0.08, figure.position);
     if (!figure.userData.dead) figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), 1 - Math.exp(-10 * delta));
@@ -701,10 +819,17 @@ function renderFrame(now) {
     const eased = progress * progress * (3 - 2 * progress);
     interpolateSurfacePosition(start, animal.userData.destination, eased, 0, animal.position);
     animal.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), animal.position.clone().normalize()), 1 - Math.exp(-8 * delta));
+    const walking = animal.position.distanceTo(animal.userData.destination) > 0.02;
+    for (const leg of animal.userData.legs || []) leg.rotation.x = walking ? Math.sin(now * 0.012 + leg.userData.phase) * 0.45 : 0;
   }
+  worldEffects.update(now);
   updateDaylight();
   renderLabels();
   renderer.render(scene, camera);
+  if (hoverPointer && now - lastHoverAt > 80 && !pointerDown) {
+    inspectPointer(hoverPointer);
+    lastHoverAt = now;
+  }
 }
 let frameError = null;
 function frame(now) {
@@ -787,24 +912,23 @@ function renderInspector() {
 function renderCulture() {
   const structures = world?.structures || []; const groups = world?.groups || []; const beliefs = world?.beliefs || [];
   const animals = world?.animals || []; const crops = world?.crops || [];
-  $("#culture-count").textContent = String(groups.length + beliefs.length + structures.length + animals.filter((animal) => animal.animal_type !== "wild").length);
-  const block = (title, values) => `<div class="culture-block"><h4>${title} · ${values.length}</h4><div class="chip-list">${values.length ? values.map((value) => `<span class="chip">${escapeHtml(value)}</span>`).join("") : '<span class="chip">None yet</span>'}</div></div>`;
+  $("#culture-count").textContent = String(groups.length + beliefs.length + structures.length);
+  const block = (title, values, count = true) => `<div class="culture-block"><h4>${title}${count ? ` · ${values.length}` : ""}</h4><div class="chip-list">${values.length ? values.map((value) => `<span class="chip">${escapeHtml(value)}</span>`).join("") : '<span class="chip">None yet</span>'}</div></div>`;
   $("#culture-popover").innerHTML = `<h3>World culture</h3>${block("Structures", structures.map((item) => item.kind.replaceAll("_", " ")))}${block("Groups", groups.map((item) => `${item.name} · ${item.kind} · ${item.member_ids.length}`))}${block("Beliefs", beliefs.map((item) => `${item.name} · ${item.kind}`))}`;
-  $("#culture-popover").insertAdjacentHTML("beforeend", block("Animals · NPC", animals.filter((item) => item.alive).map((item) => `${item.species} · ${item.animal_type}${item.owner_agent_id ? " · cared for" : ""}`)) + block("Growing crops", crops.map((item) => `${item.crop_kind} · ${item.growth_days} days · ${Math.round(item.moisture)}% moisture`)));
+  $("#culture-popover").insertAdjacentHTML("beforeend", block("Wildlife · NPC", [...new Set(animals.filter((item) => item.alive).map((item) => `${item.species} · ${item.animal_type}`))], false) + block("Growing crops", crops.map((item) => `${item.crop_kind} · ${item.growth_days} days · ${Math.round(item.moisture)}% moisture`)));
 }
 
 function renderWorld(next) {
   world = next;
   const year = Math.floor(world.tick / 365) + 1; const day = (world.tick % 365) + 1;
   const living = world.agents.filter((agent) => agent.alive).length;
-  const animalCount = (world.animals || []).filter((animal) => animal.alive).length;
   const localTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · DAY ${day}${world.processing ? " · THINKING" : ""}`;
+  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · DAY ${day} · ${world.time_scale || 1}×${world.processing ? " · THINKING" : ""}`;
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
-  $("#world-summary").textContent = `${living} alive · ${world.agents.length} lives in the world · ${world.season || "spring"}`;
-  $("#world-summary").textContent = [living + " people", animalCount + " animals", (world.crops?.length || 0) + " growing crops", world.season || "spring"].join(" · ");
+  $("#world-summary").textContent = [living + " people", "living wildlife", (world.crops?.length || 0) + " growing crops", world.season || "spring"].join(" · ");
+  if (document.activeElement !== $("#speed-select")) $("#speed-select").value = world.auto_accelerate ? "auto" : String(world.time_scale || 2);
   ui.run.textContent = world.running ? "Ⅱ" : "▶";
   ui.run.title = world.running ? "Pause the simulation" : "Run the simulation";
   syncObjects(world); renderInspector(); renderCulture();
@@ -828,6 +952,7 @@ async function refreshModels() {
     ui.model.innerHTML = options.join("") || `<option value="${escapeHtml(selected)}">${escapeHtml(selected)}</option>`;
     ui.model.value = selected;
     ui.model.disabled = true;
+    $("#compute-status").textContent = `QWEN · ${(health.compute?.device || "checking").toUpperCase()}`;
     ui.model.title = health.model_ready ? "Qwen guides each separate private mind." : "Qwen is unavailable. The world uses a recorded survival fallback.";
   } catch (error) { ui.model.innerHTML = "<option>Ollama unavailable</option>"; ui.model.title = error.message; }
 }
@@ -835,9 +960,14 @@ async function refreshModels() {
 ui.run.addEventListener("click", async () => {
   try {
     if (world?.running) await api("/api/world/pause", { method: "POST" });
-    else await api("/api/world/run?interval_seconds=2.5", { method: "POST" });
+    else await api("/api/world/run", { method: "POST" });
     await refreshWorld();
   } catch (error) { notify(error.message, true); }
+});
+$("#speed-select").addEventListener("change", async (event) => {
+  const automatic = event.target.value === "auto";
+  try { renderWorld(await api("/api/world/speed", { method: "PATCH", body: JSON.stringify({ time_scale: automatic ? 2 : Number(event.target.value), auto_accelerate: automatic }) })); }
+  catch (error) { notify(error.message, true); }
 });
 ui.step.addEventListener("click", async () => {
   if (isStepping) return;
@@ -867,6 +997,12 @@ function castPointer(event) {
 }
 
 function groundHit(event) {
+  if (fallbackContext) {
+    const hit = compatibilityHit(event, true);
+    if (!hit) return null;
+    const location = sceneToWorld(hit.point);
+    return terrainAt(location.x, location.y)?.kind !== "ocean" ? hit.point : null;
+  }
   castPointer(event);
   const hit = raycaster.intersectObject(terrainMesh, false)[0];
   if (!hit) return null;
@@ -875,13 +1011,63 @@ function groundHit(event) {
   return hit.point;
 }
 
+function inspectPointer(event) {
+  const tooltip = $("#world-tooltip");
+  if (!world) { tooltip.hidden = true; return null; }
+  castPointer(event);
+  const hit = fallbackContext ? compatibilityHit(event)
+    : raycaster.intersectObjects([peopleGroup, animalGroup, resourceGroup, structureGroup, cropGroup, terrainMesh], true)[0];
+  const description = describeWorldHit(hit, world, sceneToWorld);
+  if (!description) { tooltip.hidden = true; return null; }
+  tooltip.innerHTML = `<strong>${escapeHtml(description.title)}</strong>${description.lines.filter(Boolean).map((line) => `<span>${escapeHtml(line)}</span>`).join("")}`;
+  const bounds = host.getBoundingClientRect();
+  tooltip.style.left = `${Math.max(8, Math.min(host.clientWidth - 264, event.clientX - bounds.left + 16))}px`;
+  tooltip.style.top = `${Math.max(8, Math.min(host.clientHeight - 150, event.clientY - bounds.top + 18))}px`;
+  tooltip.hidden = false;
+  return description;
+}
+
+renderer.domElement.addEventListener("pointermove", (event) => { hoverPointer = { clientX: event.clientX, clientY: event.clientY }; });
+renderer.domElement.addEventListener("pointerleave", () => { hoverPointer = null; $("#world-tooltip").hidden = true; });
+
+function compatibilityHit(event, landOnly = false) {
+  const bounds = host.getBoundingClientRect();
+  const px = event.clientX - bounds.left, py = event.clientY - bounds.top;
+  const { direction, right, up, radius } = compatibilityFrame();
+  if (!landOnly) {
+    // Match the orthographic drawing, rather than using the perspective WebGL picking ray.
+    const entries = [...(world?.agents || []).filter((agent) => !agent.buried).map((agent) => ({
+      x: agent.x, y: agent.y, object: peopleMeshes.get(agent.id) })),
+    ...(world?.animals || []).filter((animal) => animal.alive).map((animal) => ({
+      x: animal.x, y: animal.y, object: sceneObjects.get(`animal-${animal.id}`) }))];
+    for (const item of entries.reverse()) {
+      const point = worldToScene(item.x, item.y), normal = point.clone().normalize();
+      if (normal.dot(direction) <= 0 || !item.object) continue;
+      const distance = Math.hypot(px - host.clientWidth / 2 - normal.dot(right) * radius,
+        py - host.clientHeight / 2 + normal.dot(up) * radius);
+      if (distance <= 12) return { object: item.object, point };
+    }
+  }
+  const x = (px - host.clientWidth / 2) / radius, y = (host.clientHeight / 2 - py) / radius;
+  if (x * x + y * y > 1) return null;
+  const normal = direction.multiplyScalar(Math.sqrt(Math.max(0, 1 - x * x - y * y)))
+    .addScaledVector(right, x).addScaledVector(up, y);
+  return { object: terrainMesh, point: normal.multiplyScalar(globeRadius) };
+}
+
 renderer.domElement.addEventListener("pointerdown", (event) => { pointerDown = { x: event.clientX, y: event.clientY }; });
 renderer.domElement.addEventListener("pointerup", (event) => {
   if (!pointerDown || Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 5) { pointerDown = null; return; }
   castPointer(event);
-  const hits = raycaster.intersectObjects(peopleGroup.children, true);
+  if (armedEvent) {
+    const point = groundHit(event);
+    if (point) { triggerEvent(armedEvent, point); armedEvent = null; host.classList.remove("event-armed"); }
+    pointerDown = null;
+    return;
+  }
+  const hits = fallbackContext ? [compatibilityHit(event)].filter(Boolean) : raycaster.intersectObjects(peopleGroup.children, true);
   const globeHit = raycaster.intersectObject(terrainMesh, false)[0];
-  const visibleHits = hits.filter((hit) => !globeHit || hit.distance < globeHit.distance);
+  const visibleHits = hits.filter((hit) => fallbackContext || !globeHit || hit.distance < globeHit.distance);
   const agentId = visibleHits.map((hit) => hit.object.userData.agentId || hit.object.parent?.userData.agentId).find(Boolean);
   if (agentId) { selectedAgentId = agentId; renderInspector(); syncObjects(world); }
   pointerDown = null;
@@ -897,6 +1083,7 @@ async function triggerEvent(kind, point) {
 }
 
 for (const tool of document.querySelectorAll(".event-tool")) {
+  tool.addEventListener("click", () => { armedEvent = tool.dataset.event; host.classList.add("event-armed"); notify("Click a place on the land, or drag the event there."); });
   tool.addEventListener("dragstart", (event) => { draggedEvent = tool.dataset.event; event.dataTransfer.setData("text/plain", draggedEvent); tool.classList.add("dragging"); host.classList.add("drop-hover"); });
   tool.addEventListener("dragend", () => { draggedEvent = null; tool.classList.remove("dragging"); host.classList.remove("drop-hover"); });
 }
@@ -913,5 +1100,5 @@ host.addEventListener("drop", async (event) => {
 
 refreshWorld(); refreshModels();
 // Polling updates the view without allowing display animation to change simulation state.
-setInterval(refreshWorld, 1500);
+setInterval(refreshWorld, 750);
 setInterval(refreshModels, 20000);

@@ -36,9 +36,45 @@ class OllamaClient:
     async def is_available(self) -> bool:
         return await self.installed_models() is not None
 
+    async def runtime_info(self) -> dict[str, object]:
+        """Report actual resident placement, rather than assuming a GPU request was honored."""
+        try:
+            async with httpx.AsyncClient(timeout=2) as client:
+                response = await client.get(f"{self.base_url}/api/ps")
+                response.raise_for_status()
+                model = next((item for item in response.json().get("models", [])
+                              if item.get("name") == settings.ollama_model), None)
+            vram = int(model.get("size_vram", 0)) if model else 0
+            return {"preference": "gpu", "device": "gpu" if vram else "cpu" if model else "unloaded",
+                    "vram_bytes": vram, "ram_fallback": True}
+        except (httpx.HTTPError, ValueError, TypeError):
+            return {"preference": "gpu", "device": "unavailable", "ram_fallback": True}
+
+    async def _gpu_first_request(self, client: httpx.AsyncClient, endpoint: str, body: dict) -> dict:
+        response = await client.post(f"{self.base_url}{endpoint}", json=body)
+        # CPU/RAM is an explicit fallback for GPU allocation errors, not the normal request path.
+        gpu_failure = response.status_code >= 400 and any(word in response.text.lower()
+            for word in ("cuda", "gpu", "vram", "out of memory", "allocation"))
+        if gpu_failure:
+            fallback = {**body, "options": {**body.get("options", {}), "num_gpu": 0}}
+            response = await client.post(f"{self.base_url}{endpoint}", json=fallback)
+        response.raise_for_status()
+        return response.json()
+
+    async def warm_model(self) -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=settings.ollama_timeout_seconds) as client:
+                await self._gpu_first_request(client, "/api/generate", {
+                    "model": settings.ollama_model, "prompt": "", "stream": False, "keep_alive": -1,
+                    "options": {"num_gpu": settings.ollama_gpu_layers, "num_ctx": 4096}})
+            return True
+        except (httpx.HTTPError, ValueError):
+            return False
+
     async def decide(self, agent: Agent, world: WorldState) -> AgentAction:
         choices = self.action_choices(agent, world)
         full = self._observation(agent, world)
+        land = next((cell for cell in world.terrain if cell.x == agent.x and cell.y == agent.y), None)
         # Salient private context fits a 0.5B brain better than a full world schema and raw UUIDs.
         observation = {
             "you": {key: full["agent"][key] for key in (
@@ -51,6 +87,8 @@ class OllamaClient:
                              for person in full["nearby_agents"][:8]],
             "local_resources": full["visible_resources"][:12],
             "local_shelters": [item["kind"] for item in full["nearby_structures"]],
+            "land_condition": {"health": round(land.condition), "fertility": round(land.fertility),
+                               "pollution": round(land.pollution)} if land else None,
         }
         # A small model selects a concrete, feasible action instead of generating optional IDs and fields.
         # The previous 48-token full-action output was regularly truncated in the middle of a UUID.
@@ -76,8 +114,8 @@ class OllamaClient:
             "model": settings.ollama_model,
             "stream": False,
             "format": schema,
-            "options": {"temperature": 0.2, "num_predict": 160, "num_ctx": 4096},
-            "keep_alive": "10m",
+            "options": {"temperature": 0.2, "num_predict": 160, "num_ctx": 4096, "num_gpu": settings.ollama_gpu_layers},
+            "keep_alive": -1,
             "messages": [
                 {
                     "role": "system",
@@ -88,9 +126,7 @@ class OllamaClient:
         }
         try:
             async with httpx.AsyncClient(timeout=settings.ollama_timeout_seconds) as client:
-                response = await client.post(f"{self.base_url}/api/chat", json=body)
-                response.raise_for_status()
-                payload = response.json()
+                payload = await self._gpu_first_request(client, "/api/chat", body)
             content = payload.get("message", {}).get("content", "")
             if not content:
                 raise OllamaError("Ollama returned an empty response")
@@ -120,6 +156,12 @@ class OllamaClient:
         distance = lambda item: OllamaClient._distance(agent.x, agent.y, item.x, item.y, world.width)
         resources = [node for node in world.resources if node.quantity > 0 and distance(node) <= 5]
         buildings = [item for item in world.structures if item.condition >= 20 and distance(item) <= 3]
+        local_cell = next((cell for cell in world.terrain if cell.x == agent.x and cell.y == agent.y), None)
+        if local_cell and local_cell.last_tended_tick != world.tick and (
+            local_cell.condition < 95 or local_cell.fertility < 45 or local_cell.pollution > 10
+            or any(node.contamination > 15 and distance(node) <= 1 for node in resources)
+        ):
+            add(18 if local_cell.condition < 50 else 31, "tend_terrain", "Restore damaged land and clean nearby food/water")
         if "drink" in allowed:
             add(0 if agent.thirst >= 75 else 10 if agent.thirst >= 45 else 40, "drink", "Find visible fresh water and drink")
         if "forage" in allowed:
@@ -337,7 +379,7 @@ class OllamaClient:
                 last_action_event.details.get("result") if last_action_event else None
             ),
             "action_rules": {
-                "decision_cycle": "Each choice is one fast action; many decision cycles fit within a one-minute world-day.",
+                "decision_cycle": "Each choice is one fast action. Biology uses an independent, accelerated elapsed-time clock.",
                 "move_step": "one cardinal step; use dx or dy, not both",
                 "forage_drink_gather": "requires standing on an edible plant or animal product, water, or material node",
                 "raw_food": "raw meat can cause foodborne disease; cook it at a campfire",
@@ -384,7 +426,7 @@ class OllamaClient:
             "forage", "drink", "rest", "move", "communicate", "help", "teach",
             "gather", "hunt", "tame", "tend_animal", "collect_animal_food",
             "plant", "water_crop", "harvest", "cook", "build", "bond",
-            "reproduce", "fight", "form_group", "join_group", "create_belief", "mourn", "bury",
+            "reproduce", "fight", "form_group", "join_group", "create_belief", "mourn", "bury", "tend_terrain",
         }
         visible = [
             node for node in world.resources if node.quantity > 0

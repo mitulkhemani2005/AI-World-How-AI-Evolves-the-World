@@ -77,8 +77,7 @@ class SimulationEngine:
         for structure in self.state.structures:
             structure.x = min(max(structure.x, 0), self.state.width - 1)
             structure.y = min(max(structure.y, 0), self.state.height - 1)
-        # A server restart restores the world but never silently resumes a background loop.
-        self.state.running = False
+        # Preserve the spectator's run/pause choice across application restarts.
         self.state.processing = False
         self._save()
 
@@ -284,8 +283,7 @@ class SimulationEngine:
         animals: list[Animal] = []
         if not habitat_cells:
             return animals
-        for index in range(28):
-            cell = self._random.choice(habitat_cells)
+        for index, cell in enumerate(cell for cell in habitat_cells if self._random.random() < 0.25):
             species = ("goat", "chicken", "dog", "deer", "boar", "hare")[index % 6]
             if cell.kind in {"rainforest", "boreal_forest"}:
                 species = species_by_habitat.get(cell.kind, species)
@@ -307,10 +305,11 @@ class SimulationEngine:
     async def reset(self, seed: int = 7) -> WorldState:
         async with self._tick_lock:
             async with self._lock:
-                self.state.running = False
-                self._clock_at = None
+                was_running = self.state.running
+                self._clock_at = time.monotonic() if was_running else None
                 self._decision_epoch += 1
                 self.state = self._new_world(seed)
+                self.state.running = was_running
                 self._save()
                 return self.state.model_copy(deep=True)
 
@@ -320,10 +319,6 @@ class SimulationEngine:
 
     async def start(self, interval_seconds: float | None = None) -> WorldState:
         async with self._lock:
-            if not any(agent.alive for agent in self.state.agents):
-                self.state.running = False
-                self._save()
-                return self.state.model_copy(deep=True)
             # Each interval is an agent decision opportunity, not a whole simulated day.
             self._tick_interval_seconds = min(max(interval_seconds or settings.decision_interval_seconds, 0.5), 10.0)
             self.state.running = True
@@ -340,40 +335,58 @@ class SimulationEngine:
         async with self._lock:
             self._decision_epoch += 1
             if self._clock_at is not None:
-                self._advance_time(self.state, max(0, time.monotonic() - self._clock_at))
+                self._advance_time(self.state, max(0, time.monotonic() - self._clock_at) * self.state.time_scale)
             self._clock_at = None
             self.state.running = False
+            self.state.processing = False
             self._save()
             return self.state.model_copy(deep=True)
 
+    async def change_speed(self, speed: float, automatic: bool) -> WorldState:
+        async with self._lock:
+            self.state.base_time_scale = self.state.time_scale = min(16, max(1, speed))
+            self.state.auto_accelerate = automatic
+            self.state.running_elapsed_seconds = 0
+            self._save()
+            return self.state.model_copy(deep=True)
+
+    async def shutdown(self) -> None:
+        """Suspend tasks without changing the persisted spectator run/pause choice."""
+        async with self._lock:
+            self._decision_epoch += 1
+            self.state.processing = False
+            self._save()
+        tasks = [task for task in (self._runner_task, self._clock_task) if task]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    def _report_error(self, message: str, error: Exception) -> None:
+        detail = str(error)[:300]
+        previous = next((event for event in reversed(self.state.events) if event.kind == EventKind.SIMULATION_ERROR), None)
+        if not previous or previous.details.get("error") != detail or previous.tick != self.state.tick:
+            self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR, message,
+                         details={"error": detail, "recoverable": True})
+        self.state.processing = False
+        self._save()
+
     async def _run_loop(self) -> None:
-        # Keep decisions on a steady real-time cadence even when model calls take a little time.
-        next_cycle_at = time.monotonic() + self._tick_interval_seconds
+        """Keep executing actions until explicit pause; transient failures retry with backoff."""
         while True:
-            await asyncio.sleep(max(0, next_cycle_at - time.monotonic()))
+            delay = max(0.35, self._tick_interval_seconds / math.sqrt(self.state.time_scale))
+            await asyncio.sleep(delay)
             async with self._lock:
                 if not self.state.running:
-                    self._runner_task = None
                     return
             try:
                 await self._tick_once()
-                next_cycle_at += self._tick_interval_seconds
-                if next_cycle_at < time.monotonic():
-                    next_cycle_at = time.monotonic()
             except Exception as exc:
-                # Keep a failed background tick visible and stop instead of spinning on bad state.
                 async with self._lock:
-                    # tick() records the failure; this also covers exceptions before it could do so.
-                    if self.state.processing:
-                        self.state.running = False
-                        self.state.processing = False
-                        self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR, "The simulation paused after an internal error.", details={"error": str(exc)[:300]})
-                        self._save()
-                    self._runner_task = None
-                return
+                    self._report_error("An action round failed; the world is continuing and will retry.", exc)
+                await asyncio.sleep(2)
 
     async def _clock_loop(self) -> None:
-        """Advance real elapsed time even while Ollama is busy, with no spectator required."""
+        """Clock and ecology continue through inference, interventions and human extinction."""
         while True:
             await asyncio.sleep(0.5)
             async with self._lock:
@@ -383,13 +396,20 @@ class SimulationEngine:
                 current = time.monotonic()
                 elapsed = max(0, current - (self._clock_at if self._clock_at is not None else current))
                 self._clock_at = current
+                self.state.running_elapsed_seconds += elapsed
+                if self.state.auto_accelerate:
+                    stages = int(self.state.running_elapsed_seconds / max(1, settings.auto_acceleration_seconds))
+                    self.state.time_scale = min(8, self.state.base_time_scale * 2 ** min(stages, 4))
+                # Roll back only a failed clock update so a partial day cannot be applied twice.
+                checkpoint = self.state.model_copy(deep=True)
+                random_state = self._random.getstate()
                 try:
-                    self._advance_time(self.state, elapsed)
+                    self._advance_time(self.state, elapsed * self.state.time_scale)
+                    self._move_animal_npcs(self.state)
                 except Exception as exc:
-                    self.state.running = False
-                    self.state.processing = False
-                    self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR,
-                                 "The world clock paused after an internal error.", details={"error": str(exc)[:300]})
+                    self.state = checkpoint
+                    self._random.setstate(random_state)
+                    self._report_error("An ecology update failed; the world is continuing and will retry.", exc)
                 self._save()
 
     def _advance_time(self, world: WorldState, elapsed_seconds: float = 0, force_day: bool = False) -> None:
@@ -414,11 +434,7 @@ class SimulationEngine:
         except Exception as exc:
             async with self._lock:
                 if self.state.processing:
-                    self.state.running = False
-                    self.state.processing = False
-                    self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR,
-                                 "The simulation paused after an internal error.", details={"error": str(exc)[:300]})
-                    self._save()
+                    self._report_error("A manual step failed; the world remains available.", exc)
             raise
 
     async def _tick_once(self, elapsed_seconds: float = 0, force_day: bool = False) -> WorldState:
@@ -536,12 +552,11 @@ class SimulationEngine:
                         )
                     handled.add(agent.id)
 
-                # The run loop should stop cleanly when no living agent remains.
+                # Human extinction is an outcome; the clock and ecosystem keep running.
                 if not any(agent.alive for agent in world.agents):
-                    world.running = False
                     if not any(event.kind == EventKind.WORLD_EXTINCT for event in world.events):
                         self._record(world, EventSource.SYSTEM, EventKind.WORLD_EXTINCT,
-                                     "No living agents remain; this world has ended.")
+                                     "The human population is extinct; the ecosystem continues running.")
 
                 world.events = world.events[-settings.max_saved_events :]
                 world.processing = False
@@ -712,8 +727,13 @@ class SimulationEngine:
                 return f"There was no {kind} to gather here."
             node.quantity -= 1
             agent.inventory[kind] = agent.inventory.get(kind, 0) + 1
+            cell = self._terrain_at(world, agent.x, agent.y)
+            if cell and kind == "wood":
+                cell.condition = max(0, cell.condition - 2)
             self._learn(agent, f"gathering {kind}")
             return f"Gathered one unit of {kind}."
+        if action.action == "tend_terrain":
+            return self._tend_terrain(world, agent)
         if action.action == "hunt":
             return self._hunt(world, agent, action.target_animal_id)
         if action.action == "tame":
@@ -796,6 +816,31 @@ class SimulationEngine:
         if action.action == "create_belief":
             return self._create_belief(world, agent, action)
         return "The action was not supported by this world."
+
+    def _tend_terrain(self, world: WorldState, agent: Agent) -> str:
+        """Local stewardship restores damaged habitat and cleans existing resources."""
+        cell = self._terrain_at(world, agent.x, agent.y)
+        if not cell or cell.kind == "ocean":
+            return "Land care requires standing on land."
+        if cell.last_tended_tick == world.tick:
+            return "This habitat has already been tended today."
+        cell.condition = min(100, cell.condition + 12)
+        cell.fertility = min(100, cell.fertility + 8)
+        cell.pollution = max(0, cell.pollution - 15)
+        cell.last_tended_tick = world.tick
+        nearby = [node for node in world.resources if self._distance_to(node.x, node.y, agent.x, agent.y, world.width) <= 1]
+        water = next((node for node in nearby if node.kind == "water" and node.quantity > 0), None)
+        if water and cell.moisture < 0.7:
+            water.quantity -= 1
+            cell.moisture = min(1, cell.moisture + 0.08)
+        for node in nearby:
+            node.contamination = max(0, node.contamination - 18)
+        agent.energy = max(0, agent.energy - 4)
+        self._learn(agent, "land stewardship")
+        self._remember(agent, f"You tended the {cell.kind} and cleaned nearby resources.")
+        self._record(world, EventSource.AGENT_ACTION, EventKind.TERRAIN_CARE,
+                     f"{agent.name} restored local habitat.", [agent.id], {"x": agent.x, "y": agent.y})
+        return f"Restored the {cell.kind.replace('_', ' ')} and cleaned nearby resources."
 
     def _foodborne_risk(self, world: WorldState, agent: Agent, food: ResourceNode) -> None:
         """Unsafe raw food and contamination can cause distinct foodborne diseases."""
@@ -1132,6 +1177,55 @@ class SimulationEngine:
 
         self._advance_crops(world)
         self._advance_animals(world)
+        self._spawn_wildlife(world)
+        for cell in world.terrain:
+            if cell.kind in FARMABLE_TERRAIN and cell.moisture > 0.2:
+                cell.condition = min(100, cell.condition + 0.2)
+                cell.fertility = min(100, cell.fertility + 0.1)
+        for animal in world.animals:
+            if not animal.alive and animal.death_tick is None:
+                animal.death_tick = world.tick
+        world.animals = [animal for animal in world.animals
+                         if animal.alive or world.tick - (animal.death_tick if animal.death_tick is not None else world.tick) < 30]
+
+    def _move_animal_npcs(self, world: WorldState) -> None:
+        """Cheap spatial NPC updates run independently of human inference and biological days."""
+        for animal in world.animals:
+            if not animal.alive or self._random.random() > 0.08:
+                continue
+            choices = self._habitable_neighbors(world, animal.x, animal.y)
+            owner = next((person for person in world.agents if person.id == animal.owner_agent_id and person.alive), None)
+            if animal.animal_type == "pet" and owner:
+                target = (owner.x, owner.y)
+            else:
+                needs = [node for node in world.resources if node.quantity > 0
+                         and (node.kind == "water" if animal.thirst > 45 else node.kind in FOOD_KINDS)
+                         and self._distance_to(node.x, node.y, animal.x, animal.y, world.width) <= 3]
+                node = min(needs, key=lambda item: self._distance_to(item.x, item.y, animal.x, animal.y, world.width), default=None)
+                target = (node.x, node.y) if node and max(animal.hunger, animal.thirst) > 45 else None
+            animal.x, animal.y = min(choices, key=lambda point: self._distance_to(*point, *target, world.width)) if target else self._random.choice(choices)
+
+    def _spawn_wildlife(self, world: WorldState) -> None:
+        """Wildlife recolonizes suitable habitat; population follows habitat capacity, not a fixed total."""
+        species = {"forest": ("deer", "boar", "dog"), "rainforest": ("chicken", "boar"),
+                   "boreal_forest": ("hare", "deer"), "grassland": ("goat", "antelope"),
+                   "plains": ("deer", "hare"), "farmland": ("chicken", "goat")}
+        occupancy: dict[tuple[int, int], int] = {}
+        for animal in world.animals:
+            if animal.alive:
+                key = (animal.x, animal.y)
+                occupancy[key] = occupancy.get(key, 0) + 1
+        for cell in world.terrain:
+            capacity = max(1, int(cell.condition * cell.fertility / 3500))
+            if (cell.kind not in species or cell.condition < 40 or cell.pollution > 60
+                or occupancy.get((cell.x, cell.y), 0) >= capacity or self._random.random() > 0.015):
+                continue
+            animal = Animal(id=str(uuid4()), species=self._random.choice(species[cell.kind]),
+                            sex=self._random.choice(("male", "female")), age_days=self._random.randint(100, 700),
+                            x=cell.x, y=cell.y, temperament=self._random.uniform(0.1, 0.8))
+            world.animals.append(animal)
+            self._record(world, EventSource.NATURAL, EventKind.ANIMAL_SPAWNED,
+                         f"A wild {animal.species} entered the habitat.", details={"animal_id": animal.id, "x": cell.x, "y": cell.y})
 
     def _advance_crops(self, world: WorldState) -> None:
         for plot in world.crops:
@@ -1144,7 +1238,7 @@ class SimulationEngine:
                 plot.moisture = max(0, plot.moisture - 2)
             if any(node.kind == "water" and node.quantity > 0 and self._distance_to(node.x, node.y, plot.x, plot.y) <= 1.5 for node in world.resources):
                 plot.moisture = min(100, plot.moisture + 3)
-            if cell and cell.kind in {"desert", "mountain", "ice"}:
+            if cell and (cell.kind in {"desert", "mountain", "ice"} or cell.fertility < 15 or cell.pollution > 60):
                 plot.condition = max(0, plot.condition - 2)
             elif plot.moisture < 12:
                 plot.condition = max(0, plot.condition - 4)
@@ -1246,7 +1340,8 @@ class SimulationEngine:
                              and other.animal_type == animal.animal_type
                              and (animal.animal_type == "wild" or other.owner_agent_id == animal.owner_agent_id)
                              and self._distance_to(animal.x, animal.y, other.x, other.y) <= 1), None)
-                if mate and len(world.animals) < 200:
+                if mate and sum(item.alive and self._distance_to(item.x, item.y, animal.x, animal.y, world.width) <= 1
+                                for item in world.animals) < 6:
                     offspring = Animal(
                         id=str(uuid4()), species=animal.species,
                         animal_type=animal.animal_type, owner_agent_id=animal.owner_agent_id,
@@ -1511,7 +1606,16 @@ class SimulationEngine:
         return affected
 
     def _apply_hazard_to_resources(self, world: WorldState, x: int, y: int, radius: float, hazard: str) -> None:
-        """Spread environmental damage to nearby food, materials, and buildings."""
+        """Spread environmental damage to habitat, food, materials, and buildings."""
+        for cell in world.terrain:
+            distance = self._distance_to(cell.x, cell.y, x, y, world.width)
+            if cell.kind == "ocean" or distance > radius:
+                continue
+            impact = max(0.1, 1 - distance / radius)
+            cell.condition = max(0, cell.condition - impact * (35 if hazard == "wildfire" else 15))
+            cell.fertility = max(0, cell.fertility - impact * 8)
+            if hazard in {"wildfire", "flood"}:
+                cell.pollution = min(100, cell.pollution + impact * 18)
         for node in world.resources:
             distance = self._distance_to(node.x, node.y, x, y)
             if distance > radius:

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.agent_brain.ollama_client import OllamaClient
-from app.domain import AgentStateChange, ModelChange, SpectatorEventRequest, WorldState
+from app.domain import AgentStateChange, ModelChange, SpeedChange, SpectatorEventRequest, WorldState
 from app.settings import settings
 from app.simulation.engine import engine
 
@@ -18,6 +18,7 @@ async def health() -> dict[str, object]:
     default_model = settings.ollama_model
     world = await engine.snapshot()
     current_model = world.global_model
+    runtime = await ollama.runtime_info()
     return {
         "status": "ok",
         "ollama_available": models is not None,
@@ -26,6 +27,7 @@ async def health() -> dict[str, object]:
         "current_model": current_model,
         "model_ready": models is not None and current_model in models,
         "installed_models": models or [],
+        "compute": runtime,
     }
 
 
@@ -56,6 +58,11 @@ async def run_world(interval_seconds: float | None = None) -> WorldState:
 @router.post("/world/pause", response_model=WorldState)
 async def pause_world() -> WorldState:
     return await engine.pause()
+
+
+@router.patch("/world/speed", response_model=WorldState)
+async def change_speed(request: SpeedChange) -> WorldState:
+    return await engine.change_speed(request.time_scale, request.auto_accelerate)
 
 
 @router.post("/world/reset", response_model=WorldState)

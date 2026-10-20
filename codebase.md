@@ -16,6 +16,8 @@
 │   └── src/
 │       ├── app.js                      # 3D globe, figures, API UI, and 2D fallback for unavailable WebGL
 │       ├── surface-motion.js           # Quaternion-based movement over a spherical surface
+│       ├── world-effects.js            # Geographic event animation and resource disposal
+│       ├── world-inspection.js         # Hover descriptions for world entities and terrain
 │       └── styles.css                  # White, responsive spectator interface
 └── backend/
     ├── requirements.txt                # FastAPI, Uvicorn, and HTTPX dependencies
@@ -48,6 +50,10 @@ The saved world stores a procedural terrain cell for every longitude/latitude co
 | `frontend/src/app.js` | Three.js terrain, resource scenery, human figures, labels, click selection, inspector, event drops, and API requests. | Terrain rendering, mapping, or browser interaction is wrong. |
 | `frontend/src/styles.css` | White responsive styling and world overlays. | Layout, typography, mobile sizing, or colors look wrong. |
 | `frontend/src/surface-motion.js` | Interpolates direction with quaternions and radius separately. `Vector3.slerp` does not exist in Three.js. | A populated scene freezes or people move through the globe. |
+| `frontend/src/world-effects.js` | Consumes new events into location-specific particles; animation never controls the backend. | Effects fail to appear, deduplicate or expire. |
+| `frontend/src/world-inspection.js` | Resolves figure ancestry into current agent, NPC, resource, building, crop or terrain details. | Hover details are missing or stale. |
+| `frontend/tests/world-features.test.js` | Event lifecycle and hover descriptors using real Three.js objects. | A particular event or object type regresses. |
+| `backend/tests/test_continuous_world.py` | Acceleration, error recovery, restart/reset, close founders, GPU fallback and habitat care/spawning. | Continuous running or compute placement changes. |
 | `frontend/tests/world-runtime.test.js` | Executes the app update/frame flow using real geometry/math and stub browser/GPU surfaces. | A production build passes but rendering or selection fails at runtime. |
 | `backend/tests/test_world.py` | Isolated temporary-world regression checks. | Biology, material accounting, consent, timing, inference or persistence changes. |
 | `frontend/vite.config.js` | Frontend dev server and proxy from `/api` to FastAPI. | Local frontend API requests fail. |
@@ -70,14 +76,14 @@ events and world state persist in SQLite
 Vite renders the continuous land, figures, resources, and inspectable life records
 ```
 
-The browser never advances biology. The decision loop offers an action opportunity about every 2.5 seconds, while a separate elapsed-time task advances one biological day every 60 seconds even during slow inference. A model-selected trip can continue without asking the LLM to reselect its intention at every step. `decision_source` distinguishes fresh choices from continuation and fallback, while `intention_source` records the task's original source. `pending_action`, `construction_project`, `visited_cells` and `last_result` persist individual progress. The `POST /api/world/tick` endpoint remains a manual one-day step. Local computer time drives visible lighting/clock; simulated year/day are separate. Animals never call the LLM. Bodies persist until burial. Pause invalidates model proposals still in flight. SQLite includes the random stream and pending work.
+The browser never advances biology. The base decision delay is 1.2 seconds divided by the square root of current speed (minimum 0.35 seconds), plus inference latency. A separate clock multiplies elapsed real running time by `time_scale`; 60 scaled seconds advance one biological day. Auto starts at 2x, doubles every 120 running seconds and caps at 8x. Manual speeds are 1x-16x. A model-selected trip can continue without asking the LLM to reselect its intention at every step. `decision_source` distinguishes fresh choices from continuation and fallback, while `intention_source` records the task's original source. `pending_action`, `construction_project`, `visited_cells` and `last_result` persist individual progress. The `POST /api/world/tick` endpoint remains a manual one-day step. Local computer time drives visible lighting/clock; simulated year/day are separate. Animals never call the LLM. Bodies persist until burial. Pause invalidates model proposals still in flight. SQLite includes the random stream and pending work.
 
-Living population is capped at 128 to bound local LLM and simulation load. When the last person dies, the engine records world extinction and stops its background loop. A failed decision round is recorded and pauses the simulation so it can be inspected and restarted.
+Living population is capped at 128 to bound local LLM and simulation load. Human extinction is recorded while ecology continues. Recoverable action errors retry with backoff; failed ecology updates roll back the partial update and retry. Only explicit pause stops a running world. Startup resumes saved running worlds; shutdown preserves that choice. Wildlife uses local habitat capacity rather than a global quota.
 
 ## Debugging path
 
-1. Open `GET /api/health`; confirm whether Ollama is reachable and the selected model is installed.
-2. Inspect `GET /api/world`; check `global_model`, `running`, `processing`, agent locations, needs, disease, and `last_action`.
+1. Open `GET /api/health`; confirm Ollama is reachable, Qwen is installed, and `compute.device`/`vram_bytes` report actual residency. Requests ask for all GPU layers; GPU allocation failure retries with `num_gpu=0`. Warmup and `keep_alive=-1` avoid repeated unloads.
+2. Inspect `GET /api/world`; check `global_model`, `running`, `processing`, `time_scale`, `auto_accelerate`, agent locations, needs, disease, and `last_action`.
 3. Read the retained `events` in the response for `fallback_decision`, rejected actions, hazards, births, deaths, and spectator changes. The UI intentionally has no timeline, but the API preserves these records.
 4. For an action without the expected result, inspect its action event and proposed action. The engine may have moved an agent toward a resource instead of completing the action immediately, or rejected a choice due to age, location, resources, or missing consent.
 5. For an event drop, confirm the pointer ray intersects the walkable land and inspect the resulting event's `x`, `y`, `source`, and affected agent IDs.

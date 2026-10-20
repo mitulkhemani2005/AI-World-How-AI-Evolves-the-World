@@ -19,7 +19,7 @@ The spectator does not direct normal daily choices. The world advances on its ow
 5. Farm plots need a farm, knowledge, suitable soil, water, and time. Harvests can fail through drought, fire, or neglect. Raw meat, spoiled food, and contaminated water can cause foodborne or waterborne disease.
 6. Need, injury, disease, exposure, conflict, childbirth complications, and aging can cause death at any age. Children depend on caregivers and can learn through agent teaching.
 7. Parents share nearby food and water with dependent children. Shelter reduces weather exposure, while severe hazards can damage buildings, crops, wildlife, food, and water.
-8. Population is capped at 128 living agents so local inference and simulation remain tractable. The world records extinction and stops when no one remains.
+8. Population is capped at 128 living agents so local inference and simulation remain tractable. Human extinction is recorded while ecology and the clock continue. Only an explicit spectator pause stops a running world.
 9. The backend persists each world and its random stream in SQLite. The frontend reads snapshots and displays agents and world objects on the fictional globe.
 
 If Ollama is unavailable or a response is invalid, a recorded survival fallback keeps the prototype moving. That fallback is a rule-based decision, not an LLM response. Animals use explicit hardcoded NPC behavior in the simulation engine and never call the LLM.
@@ -28,11 +28,14 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 
 - See a light, orbitable procedural globe with human figures, wild and domesticated animals, growing crops, resources, forests, and buildings. Its fictional continents are generated from simulation rules and do not copy real Earth geography or satellite imagery. Drag to orbit, scroll to zoom, and click a figure to open that person's life record. If the device blocks WebGL, a 2D compatibility globe still shows terrain and agents.
 - Review age, health, hunger, thirst, energy, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
-- Every person uses `qwen2.5:0.5b`. Each agent still has an independent identity and private history.
-- Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
-- Run, pause, advance one day, or reset the world. During a run, agents receive an action opportunity about every 2.5 seconds, subject to local inference latency. A separate clock advances biology every 60 real elapsed seconds, including while inference is waiting. Pause discards late model results. The minimalist spectator does not use a name roster or a visible timeline.
+- Every person uses `qwen2.5:0.5b` with independent identity and private history. Ollama requests all model layers on GPU, keeps Qwen resident, and retries allocation failures using RAM/CPU. The header reports actual GPU/CPU residency.
+- Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. Or click an event and then its location. Fire, rain clouds, flood waves, drought dust, outbreak particles, and mishaps animate there without pausing the world; equivalent natural events can occur without the spectator.
+- Run, pause, advance one day, or reset the world. The base decision delay is 1.2 seconds, reduced with speed, plus inference latency. A separate clock advances biology while inference waits: a day is 60 real seconds at 1×. Auto starts at 2×, doubles after each two minutes of running, and caps at 8×; choose a fixed 1-16× speed from the header. Pause discards late model results. The minimalist spectator does not use a name roster or a visible timeline.
 - Start near the people and follow their movement. Use **People**, **Globe**, **+**, and **−** for camera control, or orbit and scroll directly. Action labels show physical work and pending intentions; the inspector explains results and decision sources.
-- Watch the globe's sunlight follow your computer's local clock. The world still advances one biological day per 60 seconds of real elapsed time, with agents making multiple decisions during each day. Every action appears above its agent. Dead people remain visible on the ground until a nearby agent chooses to mourn or bury them.
+- Watch the globe's sunlight follow your computer's local clock. Simulation speed changes biology and action cadence independently of the local clock. Every action appears above its agent. Dead people remain visible on the ground until a nearby agent chooses to mourn or bury them.
+- Hover people, animals, resources, crops, buildings, trees, and terrain to inspect them. Animals are larger articulated NPC figures and recolonize suitable habitat without a global animal quota; no animal totals appear in the interface.
+- Agents can choose terrain care: restore habitat health and soil fertility, clean contaminated resources, and use available water. Hazards and wood gathering damage land; degraded soil affects crops.
+- Running worlds resume across backend restarts and retry recoverable errors. Reset preserves the current run/pause choice. New founders start on adjacent land, with reproduction still requiring independent mutual consent.
 - Inspect the world API and its retained event records for debugging and provenance.
 
 ## Technology
@@ -90,11 +93,12 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 
 ## API overview
 
-- `GET /api/health` — API, Ollama, and configured model readiness.
+- `GET /api/health` — API, Ollama, configured model readiness, and actual compute residency.
 - `GET /api/models` — the supported shared Qwen model and local availability.
 - `GET /api/world` — authoritative world snapshot, including retained event records.
 - `POST /api/world/tick` — manually advance one simulated day and collect one set of agent decisions.
 - `POST /api/world/run?interval_seconds=3` / `POST /api/world/pause` — start or stop autonomous simulation.
+- `PATCH /api/world/speed` — set `time_scale` (1–16) and `auto_accelerate`.
 - `POST /api/world/reset?seed=7` — start a fresh world.
 - `PATCH /api/world/model` — validate/apply the pinned shared Qwen model; other models are rejected.
 - `PATCH /api/agents/{agent_id}/state` — adjust an individual's health, hunger, thirst, or energy.
@@ -113,7 +117,7 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 
 ## Boundaries
 
-The run loop offers a new agent decision every 2.5 seconds; 60 seconds of real time advances one simulated day. The `tick` endpoint is a manual one-day step. The starting period of 6–7 million years ago is thematic; the current small map, life-stage, disease, and hazard rules are simplified assumptions, not calibrated biology or history. LLMs propose choices but cannot directly mutate physics, consent, biology, or persistence.
+The clock uses elapsed real time multiplied by the selected speed; model decisions never directly advance a day. At 1× a day takes 60 seconds; default Auto starts at 2× and reaches 8×. Faster action rounds remain subject to model latency. The `tick` endpoint is a manual one-day step. The starting period of 6–7 million years ago is thematic; the current small map, life-stage, disease, and hazard rules are simplified assumptions, not calibrated biology or history. LLMs propose choices but cannot directly mutate physics, consent, biology, or persistence.
 
 ## Verification
 
@@ -124,7 +128,7 @@ $env:PYTHONPATH = "backend"
 python -m unittest discover -s backend/tests -v
 ```
 
-Frontend checks execute the actual application update and frame functions with real Three.js geometry and math, replacing browser/GPU surfaces. They cover populated frames, movement, UV alignment, figure selection, camera zoom, death, burial, and reset; they do not claim to test a physical GPU. Backend checks use temporary databases and cover the shared-model contract, fallback construction, timing during slow inference, pause, resource conservation, food production, teaching, consent, birth, disease, and persistence.
+Frontend checks execute the actual application update and frame functions with real Three.js geometry and math, replacing browser/GPU surfaces. They cover populated frames, movement, UV alignment, figure selection, camera collision limits, hover inspection, event animation/disposal, compatibility picking, death, burial, and reset; they do not claim to test a physical GPU. Backend checks use temporary databases and cover the shared-model contract, fallback construction, timing during slow inference, pause, resource conservation, food production, teaching, consent, birth, disease, persistence, wildlife spawning, terrain care, GPU-first fallback, acceleration, and continued running after extinction or recoverable errors.
 
 ## License
 

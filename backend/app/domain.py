@@ -47,6 +47,8 @@ class EventKind(str, Enum):
     ANIMAL_DISEASE = "animal_disease"
     MOURNING = "mourning"
     BURIAL = "burial"
+    TERRAIN_CARE = "terrain_care"
+    ANIMAL_SPAWNED = "animal_spawned"
 
 
 ActionName = Literal[
@@ -75,6 +77,7 @@ ActionName = Literal[
     "form_group",
     "join_group",
     "create_belief",
+    "tend_terrain",
 ]
 
 
@@ -118,6 +121,10 @@ class TerrainCell(BaseModel):
     elevation: float = Field(default=0, ge=-1, le=1)
     moisture: float = Field(default=0.5, ge=0, le=1)
     temperature: float = Field(default=0.5, ge=0, le=1)
+    condition: float = Field(default=100, ge=0, le=100)
+    fertility: float = Field(default=70, ge=0, le=100)
+    pollution: float = Field(default=0, ge=0, le=100)
+    last_tended_tick: int = -1
 
 
 class Animal(BaseModel):
@@ -141,6 +148,7 @@ class Animal(BaseModel):
     # Livestock products replenish by day, not once per LLM decision.
     last_product_tick: int = -1
     last_care_tick: int = -1
+    death_tick: int | None = None
 
 
 class CropPlot(BaseModel):
@@ -258,9 +266,13 @@ class WorldState(BaseModel):
     # One world-wide brain model is used by every independent person.
     global_model: str = "qwen2.5:0.5b"
     tick: int = 0
-    # Elapsed real-time seconds within the current one-minute simulated day.
+    # Scaled elapsed seconds within the current day; a decision never advances this clock.
     day_progress_seconds: float = Field(default=0, ge=0)
     day_length_seconds: float = Field(default=60, ge=1, le=3600)
+    time_scale: float = Field(default=2, ge=1, le=16)
+    base_time_scale: float = Field(default=2, ge=1, le=16)
+    auto_accelerate: bool = True
+    running_elapsed_seconds: float = 0
     width: int = 12
     height: int = 8
     agents: list[Agent]
@@ -289,6 +301,11 @@ class ModelChange(BaseModel):
         if not value:
             raise ValueError("Model name cannot be empty")
         return value
+
+
+class SpeedChange(BaseModel):
+    time_scale: float = Field(default=2, ge=1, le=16)
+    auto_accelerate: bool = False
 
 
 class AgentStateChange(BaseModel):

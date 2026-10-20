@@ -4,6 +4,8 @@ import test from "node:test";
 import vm from "node:vm";
 import * as Three from "three";
 import { interpolateSurfacePosition } from "../src/surface-motion.js";
+import { WorldEffects } from "../src/world-effects.js";
+import { describeWorldHit } from "../src/world-inspection.js";
 
 test("surface travel stays above the sphere across seams, poles and opposite directions", () => {
   for (const [start, end] of [
@@ -80,13 +82,13 @@ async function loadWorldApp(forceFallback = false) {
     global_model: "qwen2.5:0.5b", running: true, weather: "clear", season: "spring", groups: [], beliefs: [],
     agents: [agent("Aru", 17, "male"), agent("Nima", 18, "female")],
     terrain: Array.from({ length: 648 }, (_, index) => ({ x: index % 36, y: Math.floor(index / 36), kind: "forest", elevation: 0.2 })),
-    animals: [{ id: "goat", species: "goat", animal_type: "wild", x: 19, y: 8, alive: true }],
+    animals: [{ id: "goat", species: "goat", animal_type: "wild", x: 19, y: 8, alive: true, health: 100, hunger: 15, thirst: 15 }],
     resources: [{ kind: "wood", x: 17, y: 8, quantity: 12, capacity: 20 }],
     structures: [{ id: "shelter", kind: "lean_to", x: 16, y: 8 }], crops: [],
   };
   let clock = 100;
   const context = vm.createContext({
-    THREE: { ...Three, WebGLRenderer: Renderer }, OrbitControls: Controls, interpolateSurfacePosition,
+    THREE: { ...Three, WebGLRenderer: Renderer }, OrbitControls: Controls, interpolateSurfacePosition, WorldEffects, describeWorldHit,
     document, window: { devicePixelRatio: 1, confirm: () => false }, console: forceFallback ? { ...console, error() {} } : console,
     performance: { now: () => clock }, ResizeObserver: class { observe() {} },
     requestAnimationFrame() {}, setInterval() {}, setTimeout() {}, clearTimeout() {}, AbortSignal,
@@ -95,13 +97,13 @@ async function loadWorldApp(forceFallback = false) {
   });
   const source = (await readFile(new URL("../src/app.js", import.meta.url), "utf8"))
     .replace(/^import .*;\r?$/gm, "").replaceAll("import.meta.env", "({})");
-  vm.runInContext(source + "\nglobalThis.app = { renderWorld, renderFrame, peopleMeshes, labels, sceneObjects, camera, controls, renderer, zoomView, showWholeWorld, worldToScene, groundHit, getSelected: () => selectedAgentId, getTerrain: () => terrainMesh };", context);
+  vm.runInContext(source + "\nglobalThis.app = { renderWorld, renderFrame, peopleMeshes, labels, sceneObjects, camera, controls, renderer, zoomView, showWholeWorld, worldToScene, groundHit, inspectPointer, constrainCamera, worldEffects, getSelected: () => selectedAgentId, getTerrain: () => terrainMesh };", context);
   await new Promise(setImmediate);
   return { app: context.app, world, elements, setClock(value) { clock = value; } };
 }
 
 test("a populated world renders continuing frames, moves people/animals, and updates death and burial", async () => {
-  const { app, world, setClock } = await loadWorldApp();
+  const { app, world, setClock, elements } = await loadWorldApp();
   assert.equal(app.peopleMeshes.size, 2);
   assert.doesNotThrow(() => { app.renderFrame(100); app.renderFrame(200); });
   assert.equal(app.renderer.drawnFrames, 2);
@@ -112,6 +114,8 @@ test("a populated world renders continuing frames, moves people/animals, and upd
   app.renderer.domElement.events.get("pointerdown")(click);
   app.renderer.domElement.events.get("pointerup")(click);
   assert.equal(app.getSelected(), "Aru", "clicking a rendered person opens that person's inspector");
+  assert.equal(app.inspectPointer(click).title, "Aru");
+  assert.equal(elements.get("#world-tooltip").hidden, false);
   assert.ok(app.groundHit(click), "event placement ray reaches the actual land");
   // Texture UVs and entity coordinates must refer to the same geographic longitude.
   const geometry = app.getTerrain().geometry;
@@ -138,6 +142,17 @@ test("a populated world renders continuing frames, moves people/animals, and upd
   const distance = app.camera.position.distanceTo(app.controls.target);
   app.zoomView(0.8);
   assert.ok(app.camera.position.distanceTo(app.controls.target) < distance);
+  app.camera.position.set(0, 0, 0);
+  app.constrainCamera();
+  assert.ok(app.camera.position.length() > 11, "camera cannot enter the ground");
+  assert.ok(app.camera.position.clone().sub(app.controls.target).dot(app.controls.target.clone().normalize()) >= 1.99);
+  world.events = [{ id: "fire", kind: "spectator_event", details: { event: "wildfire", x: 18, y: 8 } }];
+  app.renderWorld(world);
+  app.renderFrame(1750);
+  assert.equal(app.worldEffects.active.size, 1);
+  assert.equal(world.running, true, "display effects must not pause the world");
+  app.renderFrame(13000);
+  assert.equal(app.worldEffects.active.size, 0, "transient effects release their objects");
   world.agents[0].alive = false;
   app.renderWorld(world); app.renderFrame(1800);
   assert.ok(figure.userData.deathPoseApplied);
@@ -150,14 +165,30 @@ test("a populated world renders continuing frames, moves people/animals, and upd
   assert.equal(app.peopleMeshes.size, 2, "reset must not retain old figures");
 });
 
-test("blocked WebGL still updates the compatibility globe, labels and camera zoom", async () => {
-  const { app } = await loadWorldApp(true);
+test("blocked WebGL still updates the compatibility globe, picking, events and camera zoom", async () => {
+  const { app, world } = await loadWorldApp(true);
   assert.doesNotThrow(() => app.renderFrame(100));
   const canvas = app.renderer.domElement;
   assert.ok(canvas.draws > 600, "fallback paints the received biome data and living entities");
+  const direction = app.camera.position.clone().normalize();
+  const right = new Three.Vector3().crossVectors(new Three.Vector3(0, 1, 0), direction).normalize();
+  const up = new Three.Vector3().crossVectors(direction, right).normalize();
+  const normal = app.worldToScene(17, 8).normalize();
+  const radius = Math.min(1200 * 0.45, 800 * 0.39) * (29 / app.camera.position.length());
+  const pointer = { clientX: 600 + normal.dot(right) * radius, clientY: 400 - normal.dot(up) * radius };
+  assert.equal(app.inspectPointer(pointer).title, "Aru", "compatibility hover matches the drawn figure");
+  assert.ok(app.groundHit(pointer), "compatibility event drops hit drawn land");
+  app.renderer.domElement.events.get("pointerdown")(pointer);
+  app.renderer.domElement.events.get("pointerup")(pointer);
+  assert.equal(app.getSelected(), "Aru");
   const before = canvas.arcs.at(-1)[2];
   app.zoomView(0.8);
   app.renderFrame(200);
   assert.ok(canvas.arcs.at(-1)[2] > before, "zoom changes the fallback's visible globe size");
-  assert.ok(!app.labels.get("Aru").style.transform.includes("NaN"));
+  assert.equal(app.labels.get("Aru").style.display, "none", "fallback draws its own correctly projected labels");
+  world.events = [{ id: "fallback-storm", details: { event: "storm", x: 17, y: 8 } }];
+  app.renderWorld(world);
+  app.renderFrame(300);
+  assert.equal(app.worldEffects.active.size, 1);
+  assert.equal(world.running, true);
 });
