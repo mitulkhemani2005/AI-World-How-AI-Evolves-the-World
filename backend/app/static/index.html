@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#111812" />
+    <title>AI World — Living Simulation</title>
+    <link rel="stylesheet" href="/assets/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <a class="brand" href="/" aria-label="AI World home">
+          <span class="brand-mark">A</span>
+          <span><strong>AI WORLD</strong><small>an autonomous life simulation</small></span>
+        </a>
+        <div class="world-clock"><span class="live-dot"></span><span id="clock-label">Connecting to world…</span></div>
+        <div class="top-actions">
+          <label class="speed-control">Tick speed
+            <select id="speed-select" aria-label="Simulation tick interval">
+              <option value="8">Slow · 8s</option>
+              <option value="3" selected>Normal · 3s</option>
+              <option value="1">Fast · 1s</option>
+            </select>
+          </label>
+          <button id="run-button" class="button button-primary">▶ Run world</button>
+          <button id="step-button" class="button button-quiet" title="Advance one simulated day">＋1 day</button>
+        </div>
+      </header>
+
+      <main>
+        <!-- The dashboard keeps the spectator focused on world state and consequences. -->
+        <section class="hero-strip">
+          <div><div class="eyebrow">THE WORLD, WITHOUT A SCRIPT</div><h1>Watch a society <em>begin.</em></h1></div>
+          <p>Two independent minds. One changing world.<br />Every event has a cause you can inspect.</p>
+        </section>
+
+        <section class="dashboard-grid">
+          <div class="main-column">
+            <!-- World map tiles are drawn from backend coordinates by app.js. -->
+            <article class="panel world-panel">
+              <div class="panel-heading">
+                <div><div class="eyebrow">THE HABITAT</div><h2>Living world</h2></div>
+                <div class="world-facts"><span id="season-label">—</span><span class="fact-separator">/</span><span id="weather-label">—</span><span class="fact-separator">/</span><span id="tech-label">Knowledge age 0</span></div>
+              </div>
+              <div id="world-map" class="world-map" role="img" aria-label="Top-down map of the simulation world"></div>
+              <div class="map-legend">
+                <span><i class="legend-dot agent-key"></i>People</span>
+                <span><i class="legend-dot food-key"></i>Food</span>
+                <span><i class="legend-dot water-key"></i>Water</span>
+                <span><i class="legend-dot wood-key"></i>Wood</span>
+                <span><i class="legend-dot stone-key"></i>Stone</span>
+                <span><i class="legend-dot home-key"></i>Property</span>
+              </div>
+              <div class="map-caption"><span>Click a tile to choose where a spectator event happens.</span><span id="selected-cell">No tile selected</span></div>
+            </article>
+
+            <section class="agent-section">
+              <div class="section-title"><div><div class="eyebrow">INDIVIDUAL LIVES</div><h2>People in this world</h2></div><span id="population-label" class="count-pill">0 living</span></div>
+              <div id="agent-cards" class="agent-cards"></div>
+            </section>
+
+            <section class="lower-grid">
+              <article class="panel timeline-panel">
+                <div class="panel-heading"><div><div class="eyebrow">CAUSES & CONSEQUENCES</div><h2>World timeline</h2></div><span class="event-count" id="event-count">0 events</span></div>
+                <div id="event-list" class="event-list"><div class="empty-state">The story begins when the world advances.</div></div>
+              </article>
+              <article class="panel culture-panel">
+                <div class="panel-heading"><div><div class="eyebrow">WHAT THEY BUILD & BELIEVE</div><h2>Culture</h2></div></div>
+                <div id="culture-content" class="culture-content"></div>
+              </article>
+            </section>
+          </div>
+
+          <aside class="side-column">
+            <article class="panel inspector-panel">
+              <div class="panel-heading"><div><div class="eyebrow">PERSON INSPECTOR</div><h2>Agent details</h2></div></div>
+              <div id="agent-inspector" class="agent-inspector"><div class="empty-state">Select a person to inspect their life.</div></div>
+            </article>
+
+            <article class="panel model-panel">
+              <div class="panel-heading"><div><div class="eyebrow">SPECTATOR CONTROL</div><h2>Change a brain model</h2></div><span class="control-icon">↗</span></div>
+              <p class="panel-copy">Each person has a separate model assignment and keeps their own memories when you switch it.</p>
+              <label class="field-label" for="model-agent">Person</label>
+              <select id="model-agent" class="field"></select>
+              <label class="field-label" for="model-input">Ollama model name</label>
+              <input id="model-input" class="field" value="gemma4:e2b" autocomplete="off" />
+              <div class="model-row"><select id="model-options" class="field"><option value="">Installed models…</option></select><button id="refresh-models" class="icon-button" title="Refresh Ollama models">↻</button></div>
+              <button id="change-model" class="button button-outline full-width">Apply model to person</button>
+              <div id="model-status" class="inline-status">Checking local Ollama…</div>
+            </article>
+
+            <article class="panel event-control-panel">
+              <div class="panel-heading"><div><div class="eyebrow">WORLD INTERVENTION</div><h2>Trigger an event</h2></div><span class="control-icon">✳</span></div>
+              <p class="panel-copy">The world creates events naturally too. Spectator-triggered events are marked in the timeline.</p>
+              <label class="field-label" for="event-kind">Event</label>
+              <select id="event-kind" class="field">
+                <option value="wildfire">Wildfire</option><option value="storm">Storm</option><option value="flood">Flood</option><option value="drought">Drought</option><option value="injury">Injury</option><option value="disease_outbreak">Disease outbreak</option>
+              </select>
+              <label class="field-label" for="event-target">Target person (optional)</label>
+              <select id="event-target" class="field"><option value="">Near selected tile / world center</option></select>
+              <button id="trigger-event" class="button button-warning full-width">Trigger event</button>
+              <div id="event-status" class="inline-status"></div>
+            </article>
+
+            <article class="panel reset-panel">
+              <div class="reset-row"><div><div class="eyebrow">START OVER</div><h3>New world</h3><p>Reset the world and its saved history.</p></div><button id="reset-world" class="button button-quiet">Reset ↺</button></div>
+            </article>
+          </aside>
+        </section>
+      </main>
+      <footer><span>AI WORLD</span><span>Model-driven choices · rule-based consequences · inspectable history</span><a href="/docs" target="_blank" rel="noreferrer">API docs ↗</a></footer>
+    </div>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/assets/app.js" defer></script>
+  </body>
+</html>

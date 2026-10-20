@@ -1,4 +1,7 @@
+"""Environment-backed settings; defaults make the local Ollama setup turnkey."""
+
 import os
+from pathlib import Path
 
 
 class Settings:
@@ -11,6 +14,10 @@ class Settings:
     natural_event_probability = float(os.getenv("NATURAL_EVENT_PROBABILITY", "0.01"))
     disease_emergence_probability = float(os.getenv("DISEASE_EMERGENCE_PROBABILITY", "0.002"))
     max_saved_events = int(os.getenv("MAX_SAVED_EVENTS", "1000"))
+    database_path = os.getenv(
+        "AI_WORLD_DATABASE",
+        str(Path(__file__).resolve().parents[2] / "data" / "world.sqlite3"),
+    )
 
 
 settings = Settings()

@@ -1,3 +1,5 @@
+"""FastAPI endpoints used by the spectator page and local developers."""
+
 from fastapi import APIRouter, HTTPException
 
 from app.agent_brain.ollama_client import OllamaClient
@@ -10,6 +12,7 @@ router = APIRouter(prefix="/api")
 
 @router.get("/health")
 async def health() -> dict[str, object]:
+    """Report API, Ollama, and configured-model readiness separately."""
     ollama = OllamaClient()
     models = await ollama.installed_models()
     default_model = settings.ollama_model
@@ -21,6 +24,13 @@ async def health() -> dict[str, object]:
         "model_ready": model_ready,
         "installed_models": models or [],
     }
+
+
+@router.get("/models")
+async def available_models() -> dict[str, object]:
+    """Return installed local models so the spectator can switch brains."""
+    models = await OllamaClient().installed_models()
+    return {"available": models is not None, "models": models or []}
 
 
 @router.get("/world", response_model=WorldState)
@@ -54,6 +64,8 @@ async def change_agent_model(agent_id: str, request: ModelChange) -> dict[str, o
         agent = await engine.change_model(agent_id, request.model)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"agent_id": agent.id, "model": agent.model}
 
 

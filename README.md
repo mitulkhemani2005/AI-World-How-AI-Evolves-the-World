@@ -4,7 +4,7 @@ An experimental life simulation in which autonomous AI-driven people begin in a 
 
 The project is intended to let a spectator watch a society emerge over generations. Agents make their own choices; the world model determines what happens as a result. The spectator can observe hands-off, change an agent's language model, or introduce an event. The world can also produce events naturally.
 
-> **Project status:** The first FastAPI backend slice is implemented. It runs an in-memory survival simulation for two agents and connects to Ollama for action choices. The spectator frontend, persistence, reproduction, and deeper social systems are not implemented yet.
+> **Project status:** A playable local prototype is implemented. It includes a FastAPI backend, a live spectator page, Ollama-driven agent decisions, SQLite world snapshots, basic biology, reproduction, social interactions, property, beliefs, and event controls. It is an early simulation model, not a scientific reconstruction.
 
 ## Vision
 
@@ -21,7 +21,7 @@ Read [idea.md](idea.md) for the full theme and design principles.
 - **Learning across generations:** Children inherit biological traits and learn from parents and community through observation, practice, communication, and teaching.
 - **A changing environment:** Food, water, shelter, weather, hazards, and diseases affect agent decisions and survival. Events can arise naturally; the spectator can also trigger selected events.
 - **Emergent society:** Relationships, cooperation, conflict, family structures, leadership, group behavior, beliefs, religion, morality, property, and crime can develop through agent interactions and world conditions.
-- **Visible simulation:** A frontend will expose the map, agent state, events, relationships, family tree, buildings, and the effects of spectator interventions.
+- **Visible simulation:** The spectator page exposes the map, agent state, events, relationships, family tree, buildings, and the effects of spectator interventions.
 
 ## How it is intended to work
 
@@ -33,9 +33,9 @@ Read [idea.md](idea.md) for the full theme and design principles.
 
 Agent models should choose among bounded actions provided by the simulation. They do not directly edit the world state. This separation makes behavior inspectable and helps debug whether an outcome came from an agent decision, a world rule, or a spectator intervention.
 
-The backend will use FastAPI for API routes, simulation orchestration, and LLM provider adapters. Provider credentials remain on the backend; the frontend communicates with it through the API and never calls model providers directly.
+The backend uses FastAPI for API routes, simulation orchestration, and the Ollama adapter. The frontend communicates with it through the API and never calls the model directly.
 
-## Planned spectator experience
+## Spectator controls
 
 - Inspect a live map with agents, resources, hazards, and structures.
 - Select an agent to view needs, health, memories, relationships, lineage, and current model.
@@ -45,19 +45,20 @@ The backend will use FastAPI for API routes, simulation orchestration, and LLM p
 - Trigger supported events such as a flood, wildfire, injury, or disease outbreak.
 - Review a timeline that distinguishes naturally generated events from spectator-triggered ones.
 
-## Current implementation and next milestone
+## Implemented simulation systems
 
-The first backend slice now provides a small observable survival simulation:
+- A shared 2D habitat with seasonal weather and renewable food, water, wood, and stone.
+- Separate agents with individual memories, learned knowledge, inherited traits, health, needs, model assignments, and family links.
+- Ollama model selection per agent, structured action proposals, and an explainable fallback when a model is unavailable.
+- Aging, disease, transmission, recovery, injury, pregnancy, birth, inheritance, childcare, and death at any age.
+- Communication, trust, mutual bonding and reproductive choice, affairs, helping, teaching, conflict, groups, and gang-like group types.
+- Resource gathering and buildings that unlock as shared construction knowledge grows; ownership is recorded.
+- Agent-created beliefs, including deities, myths, virtues, evil, and taboos.
+- Natural mishaps, disease emergence, and disasters, plus spectator-triggered injury, outbreak, wildfire, storm, flood, or drought.
+- A browser frontend with live map, agent inspector, model controls, event timeline, culture view, and run/pause/speed/reset controls.
+- SQLite snapshot persistence so the world continues after an API restart.
 
-- A small map with food, water, and shelter resources.
-- Two agents with separate memories, needs, and model assignments.
-- Ollama-backed constrained action choices, with a survival fallback if the model is unavailable.
-- Basic health, aging, disease, natural mishaps, and mortality.
-- HTTP endpoints for stepping or running the simulation, inspecting state, changing a model, and injecting events.
-
-Next, add the frontend and durable world storage, then deepen biology with reproduction, children, inheritance, and teaching.
-
-After that, expand communication and language, tools, property, beliefs, social groups, and longer historical periods. Progress should be allowed to branch, stall, or collapse rather than being forced toward a predetermined civilization.
+The prototype does not simulate six million years of detailed history. Each tick is one simulated day; world progression depends on agent decisions, resource constraints, and the rules currently implemented.
 
 ## Repository guide
 
@@ -67,7 +68,7 @@ After that, expand communication and language, tools, property, beliefs, social 
 
 ## Development status and setup
 
-FastAPI is the backend framework. The first backend slice uses Python, Ollama, and in-memory state. The frontend and durable persistence are still to be selected. From the repository root, install the backend dependencies and start the API:
+The app uses FastAPI, Python, SQLite, a dependency-free browser UI, and Ollama. From the repository root, install the backend dependencies and start the API:
 
 ```powershell
 cd backend
@@ -75,11 +76,12 @@ python -m pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-The API documentation is available at `http://127.0.0.1:8000/docs`. The default LLM is `gemma4:e2b`; configure `OLLAMA_MODEL` or `OLLAMA_BASE_URL` with environment variables if needed. If Ollama is unavailable or returns an invalid action, the simulation uses a basic survival fallback and records that decision in the event history. World state currently resets when the backend process restarts.
+The spectator page is served at `http://127.0.0.1:8000/`; interactive API documentation is at `http://127.0.0.1:8000/docs`. The default LLM is `gemma4:e2b`. Ollama must be running locally and the model must be installed. If Ollama is unavailable or returns an invalid action, the simulation uses a basic survival fallback and records that decision in the event history. `.env.example` lists supported settings; set them in the shell or copy it to `.env` and pass `--env-file ..\.env` to Uvicorn. Do not put provider secrets in browser code.
 
-Initial API routes:
+API routes:
 
 - `GET /api/health` — backend and Ollama availability.
+- `GET /api/models` — installed Ollama models.
 - `GET /api/world` — current world state.
 - `POST /api/world/tick` — advance one simulated day.
 - `POST /api/world/run?interval_seconds=3` — run repeated ticks.
@@ -87,6 +89,8 @@ Initial API routes:
 - `POST /api/world/reset?seed=7` — create a fresh starting world.
 - `PATCH /api/agents/{agent_id}/model` — change an agent's LLM model.
 - `POST /api/events` — trigger a spectator event.
+
+World snapshots are stored in `backend/data/world.sqlite3` by default. This file is ignored by Git.
 
 ## Design boundaries
 
