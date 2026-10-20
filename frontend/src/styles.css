@@ -9,3 +9,38 @@
 .biome-legend span{display:flex;align-items:center;gap:6px;white-space:nowrap}.biome-legend i{width:8px;height:8px;border-radius:50%;background:#123c5a}.biome-legend .biome-grass{background:#819452}.biome-legend .biome-farm{background:#a9945e}.biome-legend .biome-forest{background:#355b42}.biome-legend .biome-mountain{background:#777c78}.biome-legend .biome-desert{background:#c5a16b}.biome-legend .biome-ice{background:#c7d9dc}.biome-legend .biome-river{background:#267b89}
 @media(max-width:720px){.biome-legend{left:12px;bottom:204px;max-width:calc(100vw - 24px);gap:6px 10px;padding:8px 9px;font-size:7px}.world-caption{left:18px;top:22px}.world-hud{right:12px;top:16px;gap:11px;padding:9px}.world-hint{font-size:7px;bottom:15px}}
 .habitat-line{margin:8px 0 12px;color:#94a18c;font:9px var(--mono);letter-spacing:.04em}
+
+/* The spectator controls use a quiet white theme while the globe keeps its natural biome colors. */
+:root{color-scheme:light;color:#27322c;background:#f4f5f1;--muted:#737d75;--line:rgba(44,58,48,.15);--panel:rgba(255,255,255,.93);--mint:#557346}
+body,.app-shell{background:#f4f5f1}
+.app-shell{background:radial-gradient(ellipse at 50% 48%,#fff 0,#f5f6f2 57%,#e9ece6 100%)}
+.topbar{border-bottom-color:rgba(44,58,48,.12);background:linear-gradient(180deg,rgba(255,255,255,.96),rgba(255,255,255,.78))}
+.brand-mark{border-color:#78916a;color:#48613d}
+.brand small,.model-picker span,.eyebrow{color:#738076}
+.world-state{color:#57635a}
+.live-dot{background:#60894d;box-shadow:0 0 8px #78a761}
+.model-picker select{color:#27322c}.model-picker option{color:#27322c;background:#fff}
+.icon-button{color:#4e5c51;background:rgba(255,255,255,.76)}
+.icon-button:hover{border-color:#759568;color:#334e2c}
+.run-button{color:#415f36;border-color:rgba(82,119,65,.35)}
+.world-caption .eyebrow{color:#557346}.world-caption p,.world-hint{color:#6e7971}
+.world-hint i{background:#698b59}
+.world-hud{border-color:var(--line);background:rgba(255,255,255,.88);box-shadow:0 12px 32px rgba(31,42,33,.08)}
+.hud-stat span{color:#778177}.text-button{color:#506c43}.text-button span{color:#3d5635;background:#e6ecdf}
+.event-tools,.agent-inspector,.culture-popover{border-color:var(--line);background:rgba(255,255,255,.94);box-shadow:0 16px 42px rgba(31,42,33,.12)}
+.drag-tip{color:#788379}.event-tool{color:#455249;background:#f1f3ef}.event-tool:hover,.event-tool.dragging{border-color:#96ad87;background:#edf3e8}
+.inspector-empty p,.inspector-head p,.close-inspector,.edit-title,.edit-field label,.detail-list,.memories{color:#66726a}
+.agent-avatar{border-color:#b6c5ac;color:#49643e;background:#edf2e9}
+.condition{color:#557346}.condition.dead{color:#a94740}
+.stat-top{color:#57635a}.stat-top b,.detail-line span:last-child{color:#303b33}
+.bar{background:#e2e6df}.bar i{background:#78976a}
+.edit-form{border-top-color:var(--line)}.edit-field input{color:#2f3932;background:#fff;border-color:var(--line)}
+.small-action{border-color:#a6b99b;color:#47633d;background:#f1f5ed}
+.detail-line span:last-child{text-align:right}.memories{border-top-color:var(--line)}
+.scene-label{border-color:#c4d0bd;color:#29372d;background:rgba(255,255,255,.96);box-shadow:0 2px 9px rgba(20,35,22,.13)}
+.scene-label.selected{border-color:#557346;color:#35522d;box-shadow:0 0 12px rgba(85,115,70,.25)}
+.scene-label.dead{opacity:.76;text-decoration:none;color:#655f57}
+.culture-popover h3{color:#27322c}.culture-block h4{color:#738076}.chip{color:#56644f;background:#f7f8f5}
+.source-note{color:#738076}.toast{color:#27322c;background:#fff;box-shadow:0 12px 35px rgba(31,42,33,.14)}
+.toast.error{color:#8f3933}.biome-legend{color:#46534a;background:rgba(255,255,255,.9);box-shadow:0 8px 26px rgba(31,42,33,.08)}
+.habitat-line{color:#63725f}

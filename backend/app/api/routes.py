@@ -47,7 +47,7 @@ async def advance_world() -> WorldState:
 
 
 @router.post("/world/run", response_model=WorldState)
-async def run_world(interval_seconds: float = 3.0) -> WorldState:
+async def run_world(interval_seconds: float | None = None) -> WorldState:
     return await engine.start(interval_seconds)
 
 

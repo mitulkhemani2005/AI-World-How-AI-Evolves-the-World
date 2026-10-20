@@ -44,7 +44,7 @@ class OllamaClient:
         schema["properties"]["action"]["enum"] = allowed_actions
         visible_people = [
             other.id for other in world.agents
-            if other.alive and other.id != agent.id
+            if other.id != agent.id
             and OllamaClient._distance(agent.x, agent.y, other.x, other.y, world.width) <= 3
         ]
         visible_animals = [
@@ -62,12 +62,16 @@ class OllamaClient:
             "using only their needs, memories, knowledge, and nearby observations. Be a person, not a narrator. "
             "Never invent resources. World rules decide whether the action succeeds. Bonding and reproduction "
             "need the other person's independent agreement. Children cannot perform adult actions. Keep the "
-            "reason and any message to one short sentence. Each turn is one day and allows one action. "
+            "reason and any message to one short sentence. Each turn is a brief decision opportunity; "
+            "many choices happen during one world-day. Deceased nearby people remain present until buried. "
+            "If a relative or someone you care about has died nearby, decide whether to mourn them or bury them. "
+            "Let your relationship and circumstances guide that choice. "
             "Forage, drink, and gather only work on a resource at your current position. If a needed resource "
             "is nearby but elsewhere, choose move with one cardinal dx or dy step toward it. Do not repeat "
             "an action that just failed unless the location or circumstances changed. Hunger and thirst are "
-            "urgency gauges: 0 is comfortable and 100 is critical. Avoid eating or drinking below 35. When "
-            "needs are safe, use time for people, teaching, exploration, useful materials, shelter, or culture. "
+            "urgency gauges: 0 is comfortable and 100 is critical. Avoid eating or drinking below 35. "
+            "rest is only appropriate when health is poor or energy is below 50. If healthy and rested, choose "
+            "movement, useful materials, animal care, teaching, cooperation, shelter, exploration, or culture. "
             "You may hunt wild animals, try to tame them as pets or domestic animals, tend owned animals, "
             "collect eggs or milk, plant and water crops, harvest ripe crops, and cook raw meat at a campfire. "
             "Raw meat, spoiled food, and contaminated water can make you sick; prefer cooking meat and clean water. "
@@ -78,10 +82,8 @@ class OllamaClient:
         body = {
             "model": agent.model,
             "stream": False,
-            # Gemma 4 can spend more time narrating private reasoning than choosing an action.
-            "think": False,
             "format": schema,
-            "options": {"temperature": 0.2, "num_predict": 128},
+            "options": {"temperature": 0.2, "num_predict": 48, "num_ctx": 4096},
             "messages": [
                 {
                     "role": "system",
@@ -152,6 +154,9 @@ class OllamaClient:
                 "is_your_bonded_partner": other.id == agent.bonded_partner_id,
                 "is_your_parent": other.id in agent.parent_ids,
                 "is_your_child": other.id in agent.children_ids,
+                "buried": other.buried,
+                "death_cause": other.death_cause,
+                "relative": OllamaClient._is_related(agent, other),
                 "group_id": next(
                     (group.id for group in world.groups if other.id in group.member_ids), None
                 ),
@@ -219,7 +224,7 @@ class OllamaClient:
                 last_action_event.details.get("result") if last_action_event else None
             ),
             "action_rules": {
-                "one_action_per_day": True,
+                "decision_cycle": "Each choice is one fast action; many decision cycles fit within a one-minute world-day.",
                 "move_step": "one cardinal step; use dx or dy, not both",
                 "forage_drink_gather": "requires standing on an edible plant or animal product, water, or material node",
                 "raw_food": "raw meat can cause foodborne disease; cook it at a campfire",
@@ -247,6 +252,8 @@ class OllamaClient:
             ],
             "world": {
                 "tick": world.tick,
+                "day_progress_seconds": round(world.day_progress_seconds, 1),
+                "day_length_seconds": world.day_length_seconds,
                 "season": world.season,
                 "weather": world.weather,
                 "technology_level": world.tech_level,
@@ -262,7 +269,7 @@ class OllamaClient:
             "forage", "drink", "rest", "move", "communicate", "help", "teach",
             "gather", "hunt", "tame", "tend_animal", "collect_animal_food",
             "plant", "water_crop", "harvest", "cook", "build", "bond",
-            "reproduce", "fight", "form_group", "join_group", "create_belief",
+            "reproduce", "fight", "form_group", "join_group", "create_belief", "mourn", "bury",
         ]
         visible = [
             node for node in world.resources if node.quantity > 0
@@ -273,8 +280,18 @@ class OllamaClient:
             actions.remove("forage")
         if agent.thirst < 35 or not any(node.kind == "water" for node in visible):
             actions.remove("drink")
+        if agent.health >= 70 and agent.energy >= 60 and agent.hunger < 60 and agent.thirst < 60:
+            actions.remove("rest")
         if not any(node.kind in {"wood", "stone"} for node in visible):
             actions.remove("gather")
+
+        nearby_bodies = [person for person in world.agents if person.id != agent.id and not person.alive
+                         and OllamaClient._distance(person.x, person.y, agent.x, agent.y, world.width) <= 3]
+        if not nearby_bodies:
+            actions.remove("mourn")
+            actions.remove("bury")
+        elif agent.age_days < ADULT_AGE_DAYS:
+            actions.remove("bury")
 
         nearby = [
             person for person in world.agents if person.id != agent.id and person.alive
@@ -345,3 +362,14 @@ class OllamaClient:
         if not has_raw_meat or not has_fire:
             actions.remove("cook")
         return actions
+
+    @staticmethod
+    def _is_related(first: Agent, second: Agent) -> bool:
+        """Expose close family and meaningful bonds to each independent agent brain."""
+        return (
+            second.id in first.parent_ids or second.id in first.children_ids
+            or first.id in second.parent_ids or first.id in second.children_ids
+            or first.bonded_partner_id == second.id or second.bonded_partner_id == first.id
+            or first.relationship_scores.get(second.id, 0) >= 40
+            or second.relationship_scores.get(first.id, 0) >= 40
+        )

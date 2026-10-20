@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import time
 from uuid import uuid4
 
 from app.agent_brain.ollama_client import OllamaClient, OllamaError
@@ -50,7 +51,7 @@ class SimulationEngine:
         self._ollama = OllamaClient()
         self._store = SQLiteWorldStore(settings.database_path)
         self._runner_task: asyncio.Task[None] | None = None
-        self._tick_interval_seconds = 3.0
+        self._tick_interval_seconds = settings.decision_interval_seconds
         self.state = self._store.load() or self._new_world(seed=7)
         self._upgrade_world_map(self.state)
         saved_random_state = self._store.load_random_state()
@@ -60,7 +61,7 @@ class SimulationEngine:
             # Continue older databases from their world seed; future saves persist the full stream.
             self._random.seed(self.state.seed)
         # Older snapshots may contain per-person model choices; migrate them to one shared brain.
-        if not self.state.global_model:
+        if not self.state.global_model or self.state.global_model == "gemma4:e2b":
             self.state.global_model = settings.ollama_model
         for person in self.state.agents:
             person.model = self.state.global_model
@@ -86,6 +87,7 @@ class SimulationEngine:
             global_model=settings.ollama_model,
             width=36,
             height=18,
+            day_length_seconds=settings.day_length_seconds,
             agents=[
                 Agent(
                     id="agent-1",
@@ -290,13 +292,14 @@ class SimulationEngine:
         async with self._lock:
             return self.state.model_copy(deep=True)
 
-    async def start(self, interval_seconds: float = 3.0) -> WorldState:
+    async def start(self, interval_seconds: float | None = None) -> WorldState:
         async with self._lock:
             if not any(agent.alive for agent in self.state.agents):
                 self.state.running = False
                 self._save()
                 return self.state.model_copy(deep=True)
-            self._tick_interval_seconds = min(max(interval_seconds, 0.5), 60.0)
+            # Each interval is an agent decision opportunity, not a whole simulated day.
+            self._tick_interval_seconds = min(max(interval_seconds or settings.decision_interval_seconds, 0.5), 10.0)
             self.state.running = True
             if self._runner_task is None or self._runner_task.done():
                 self._runner_task = asyncio.create_task(self._run_loop())
@@ -310,14 +313,23 @@ class SimulationEngine:
             return self.state.model_copy(deep=True)
 
     async def _run_loop(self) -> None:
+        # Keep decisions on a steady real-time cadence even when model calls take a little time.
+        last_cycle_at = time.monotonic()
+        next_cycle_at = last_cycle_at + self._tick_interval_seconds
         while True:
-            await asyncio.sleep(self._tick_interval_seconds)
+            await asyncio.sleep(max(0, next_cycle_at - time.monotonic()))
             async with self._lock:
                 if not self.state.running:
                     self._runner_task = None
                     return
             try:
-                await self.tick()
+                cycle_at = time.monotonic()
+                elapsed_seconds = max(0, cycle_at - last_cycle_at)
+                last_cycle_at = cycle_at
+                await self._tick_once(elapsed_seconds=elapsed_seconds)
+                next_cycle_at += self._tick_interval_seconds
+                if next_cycle_at < time.monotonic():
+                    next_cycle_at = time.monotonic()
             except Exception as exc:
                 # Keep a failed background tick visible and stop instead of spinning on bad state.
                 async with self._lock:
@@ -331,9 +343,9 @@ class SimulationEngine:
                 return
 
     async def tick(self) -> WorldState:
-        """Advance one day and leave the world recoverable if a decision round fails."""
+        """Manually advance one complete simulated day and resolve one decision round."""
         try:
-            return await self._tick_once()
+            return await self._tick_once(force_day=True)
         except Exception as exc:
             async with self._lock:
                 if self.state.processing:
@@ -344,17 +356,28 @@ class SimulationEngine:
                     self._save()
             raise
 
-    async def _tick_once(self) -> WorldState:
+    async def _tick_once(self, elapsed_seconds: float = 0, force_day: bool = False) -> WorldState:
         # Keep reads and spectator inspection responsive while slow model calls are in flight.
         async with self._tick_lock:
             async with self._lock:
                 world = self.state
-                world.tick += 1
                 world.processing = True
-                self._advance_environment(world)
-                self._regenerate_resources(world)
-                self._advance_ecology(world)
-                self._natural_events(world)
+                if force_day:
+                    elapsed_days = 1
+                else:
+                    progress = world.day_progress_seconds + elapsed_seconds
+                    elapsed_days = int(progress // world.day_length_seconds)
+                    world.day_progress_seconds = progress % world.day_length_seconds
+                # Age, weather, seasons, needs, and ecology move only when a full world-day passes.
+                for _ in range(elapsed_days):
+                    world.tick += 1
+                    self._advance_environment(world)
+                    self._regenerate_resources(world)
+                    self._advance_ecology(world)
+                    self._natural_events(world)
+                    for person in tuple(world.agents):
+                        if person.alive:
+                            self._advance_biology(world, person)
                 world_id = world.id
                 observation_state = world.model_copy(deep=True)
                 self._save()
@@ -368,7 +391,7 @@ class SimulationEngine:
                 if person.alive and person.age_days >= 3 * 365
             ]
             # A small concurrency limit keeps the shared local model responsive as families grow.
-            decision_slots = asyncio.Semaphore(2)
+            decision_slots = asyncio.Semaphore(4)
 
             async def decide_one(person: Agent) -> tuple[str, AgentAction | OllamaError]:
                 async with decision_slots:
@@ -419,7 +442,9 @@ class SimulationEngine:
                             self._record_action(world, agent, action, "The other person did not independently agree.")
                     else:
                         # Translate a resource-seeking choice into a path step when the resource is not underfoot.
-                        resolved_action = self._prepare_resource_action(world, agent, action)
+                        resolved_action = self._prepare_corpse_action(world, agent, action)
+                        if resolved_action is action:
+                            resolved_action = self._prepare_resource_action(world, agent, action)
                         result = self._apply_action(world, agent, resolved_action)
                         self._record_action(
                             world,
@@ -429,10 +454,6 @@ class SimulationEngine:
                             proposed_action=action if resolved_action.action != action.action else None,
                         )
                     handled.add(agent.id)
-
-                for agent in world.agents:
-                    if agent.alive:
-                        self._advance_biology(world, agent)
 
                 # The run loop should stop cleanly when no living agent remains.
                 if not any(agent.alive for agent in world.agents):
@@ -530,7 +551,7 @@ class SimulationEngine:
 
     def _apply_action(self, world: WorldState, agent: Agent, action: AgentAction) -> str:
         """Resolve one non-consensual action against authoritative world state."""
-        if self._is_child(agent) and action.action in {"build", "fight", "form_group", "reproduce", "bond", "hunt", "tame", "plant", "cook"}:
+        if self._is_child(agent) and action.action in {"build", "fight", "form_group", "reproduce", "bond", "hunt", "tame", "plant", "cook", "bury"}:
             return "This person is too young for that action."
 
         if action.action == "move":
@@ -576,6 +597,29 @@ class SimulationEngine:
             agent.energy = min(100, agent.energy + 30)
             agent.health = min(100, agent.health + 2)
             return "Rested and recovered some energy."
+        if action.action in {"mourn", "bury"}:
+            deceased = next((person for person in world.agents
+                             if person.id == action.target_agent_id and not person.alive
+                             and self._distance_to(agent.x, agent.y, person.x, person.y, world.width) <= 1), None)
+            if not deceased:
+                return "There was no deceased person nearby to attend to."
+            related = self._is_related(agent, deceased)
+            if action.action == "mourn":
+                self._remember(agent, f"Mourned {deceased.name}, who died from {deceased.death_cause or 'unknown causes'}.")
+                if related:
+                    self._remember(agent, f"You grieved for your relative {deceased.name}.")
+                self._record(world, EventSource.AGENT_ACTION, EventKind.MOURNING,
+                             f"{agent.name} mourned {deceased.name}.", [agent.id, deceased.id],
+                             {"relative": related, "cause": deceased.death_cause})
+                return f"Mourned {deceased.name}."
+            if deceased.buried:
+                return f"{deceased.name} had already been buried."
+            deceased.buried = True
+            self._remember(agent, f"Helped bury {deceased.name}.")
+            self._record(world, EventSource.AGENT_ACTION, EventKind.BURIAL,
+                         f"{agent.name} buried {deceased.name}.", [agent.id, deceased.id],
+                         {"relative": related, "cause": deceased.death_cause})
+            return f"Buried {deceased.name}."
         if action.action == "gather":
             kind = action.resource_kind or "wood"
             node = self._resource_at(world, kind, agent.x, agent.y)
@@ -997,6 +1041,7 @@ class SimulationEngine:
                     plot.condition = max(0, plot.condition - 3)
 
     def _advance_animals(self, world: WorldState) -> None:
+        """Run deterministic NPC needs, movement, illness, reproduction, and mortality."""
         living = [animal for animal in world.animals if animal.alive]
         for animal in living:
             animal.age_days += 1
@@ -1029,17 +1074,40 @@ class SimulationEngine:
                     animal.x, animal.y = self._random.choice(self._habitable_neighbors(world, animal.x, animal.y))
             else:
                 owner = next((person for person in world.agents if person.id == animal.owner_agent_id and person.alive), None)
-                if animal.animal_type == "pet" and owner and self._distance_to(animal.x, animal.y, owner.x, owner.y, world.width) > 1:
+                urgent_need = animal.hunger > 45 or animal.thirst > 35
+                if animal.animal_type == "pet" and owner and not urgent_need and self._distance_to(animal.x, animal.y, owner.x, owner.y, world.width) > 1:
                     neighbors = self._habitable_neighbors(world, animal.x, animal.y)
                     animal.x, animal.y = min(neighbors, key=lambda point: self._distance_to(point[0], point[1], owner.x, owner.y, world.width))
                 animal.hunger = min(100, animal.hunger + (1.5 if animal.animal_type == "pet" else 0.9))
+                # Livestock can graze on suitable land; pets seek edible plants and need agent care.
+                if animal.animal_type == "domestic" and cell and cell.kind in {"grassland", "plains", "farmland"}:
+                    animal.hunger = max(0, animal.hunger - 5)
+                if animal.hunger > 35:
+                    edible = next((node for node in world.resources if node.kind in {"fruit", "vegetable", "food"}
+                                   and node.quantity > 0
+                                   and self._distance_to(node.x, node.y, animal.x, animal.y, world.width) <= 1), None)
+                    if edible:
+                        edible.quantity -= 1
+                        animal.hunger = max(0, animal.hunger - 24)
+                    elif animal.hunger > 55:
+                        food_sources = [node for node in world.resources if node.kind in {"fruit", "vegetable", "food"}
+                                        and node.quantity > 0
+                                        and self._distance_to(node.x, node.y, animal.x, animal.y, world.width) <= 3]
+                        if food_sources:
+                            target = min(food_sources, key=lambda node: self._distance_to(node.x, node.y, animal.x, animal.y, world.width))
+                            neighbors = self._habitable_neighbors(world, animal.x, animal.y)
+                            animal.x, animal.y = min(neighbors, key=lambda point: self._distance_to(point[0], point[1], target.x, target.y, world.width))
             animal.thirst = min(100, animal.thirst + (1.2 if animal.animal_type != "wild" else 0.7))
-            if animal.animal_type == "wild" and animal.thirst > 25:
-                spring = next((node for node in world.resources if node.kind == "water" and node.quantity > 0
-                               and self._distance_to(node.x, node.y, animal.x, animal.y, world.width) <= 1), None)
-                if spring:
+            if animal.thirst > 25:
+                springs = [node for node in world.resources if node.kind == "water" and node.quantity > 0
+                           and self._distance_to(node.x, node.y, animal.x, animal.y, world.width) <= 4]
+                spring = min(springs, key=lambda node: self._distance_to(node.x, node.y, animal.x, animal.y, world.width), default=None)
+                if spring and self._distance_to(spring.x, spring.y, animal.x, animal.y, world.width) <= 1:
                     spring.quantity -= 1
                     animal.thirst = max(0, animal.thirst - 45)
+                elif spring and (animal.animal_type != "pet" or animal.hunger <= 45):
+                    neighbors = self._habitable_neighbors(world, animal.x, animal.y)
+                    animal.x, animal.y = min(neighbors, key=lambda point: self._distance_to(point[0], point[1], spring.x, spring.y, world.width))
             if animal.hunger > 82:
                 animal.health = max(0, animal.health - 1.5)
             if animal.thirst > 82:
@@ -1118,6 +1186,17 @@ class SimulationEngine:
 
     def _fallback_action(self, agent: Agent, world: WorldState) -> AgentAction:
         """Conservative local behavior keeps the world alive while Ollama is unavailable."""
+        nearby_body = next((person for person in world.agents if not person.alive and not person.buried
+                            and self._distance(agent, person) <= 3), None)
+        if nearby_body and self._is_related(agent, nearby_body):
+            if self._distance(agent, nearby_body) > 1:
+                return self._move_or_act(world, agent, nearby_body, "mourn",
+                                         f"Approach relative {nearby_body.name}")
+            if agent.age_days >= ADULT_AGE_DAYS and self._random.random() < 0.55:
+                return AgentAction(action="bury", target_agent_id=nearby_body.id,
+                                   reason="Bury a deceased family member")
+            return AgentAction(action="mourn", target_agent_id=nearby_body.id,
+                               reason="Mourn a deceased family member")
         if agent.thirst >= 48:
             water = self._nearest_resource(world, "water", agent)
             if water:
@@ -1211,6 +1290,17 @@ class SimulationEngine:
             f"The model chose to {action.action}; move toward nearby {resource_kind} first",
             resource_kind if action.action == "gather" else None,
         )
+
+    def _prepare_corpse_action(self, world: WorldState, agent: Agent, action: AgentAction) -> AgentAction:
+        """Route agents toward a nearby body before they mourn or bury the deceased."""
+        if action.action not in {"mourn", "bury"}:
+            return action
+        deceased = next((person for person in world.agents if person.id == action.target_agent_id
+                         and not person.alive and (action.action == "mourn" or not person.buried)), None)
+        if not deceased or self._distance(agent, deceased) <= 1:
+            return action
+        return self._move_or_act(world, agent, deceased, action.action,
+                                 f"Approach {deceased.name}'s body to {action.action}")
 
     def _build(self, world: WorldState, agent: Agent, kind: str) -> str:
         if kind not in BUILDING_RULES:
@@ -1445,6 +1535,10 @@ class SimulationEngine:
     def _check_death(self, world: WorldState, agent: Agent, cause: str, source: EventSource = EventSource.NATURAL) -> None:
         if agent.alive and agent.health <= 0:
             agent.alive = False
+            agent.death_cause = cause
+            related_people = [person for person in world.agents if person.alive and self._is_related(person, agent)]
+            for relative in related_people:
+                self._remember(relative, f"{agent.name}, your relative, died from {cause}. Their body remains nearby.")
             self._record(world, source, EventKind.DEATH, f"{agent.name} died at age {agent.age_years} from {cause}.", [agent.id], {"age_years": agent.age_years, "cause": cause})
             # Keep a group's leadership attached to living members after a death.
             for group in world.groups:
@@ -1455,6 +1549,20 @@ class SimulationEngine:
                             candidates,
                             key=lambda member: member.traits.get("sociability", 0.5),
                         ).id
+
+    @staticmethod
+    def _is_related(first: Agent, second: Agent) -> bool:
+        """Recognize close family ties from lineage, a mutual bond, or a strong relationship."""
+        return (
+            second.id in first.parent_ids
+            or second.id in first.children_ids
+            or first.id in second.parent_ids
+            or first.id in second.children_ids
+            or first.bonded_partner_id == second.id
+            or second.bonded_partner_id == first.id
+            or first.relationship_scores.get(second.id, 0) >= 40
+            or second.relationship_scores.get(first.id, 0) >= 40
+        )
 
     def _get_agent(self, agent_id: str | None) -> Agent:
         agent = next((a for a in self.state.agents if a.id == agent_id), None)

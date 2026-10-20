@@ -22,7 +22,7 @@ The spectator does not direct normal daily choices. The world advances on its ow
 8. Population is capped at 128 living agents so local inference and simulation remain tractable. The world records extinction and stops when no one remains.
 9. The backend persists each world and its random stream in SQLite. The frontend reads snapshots and displays agents and world objects on the fictional globe.
 
-If Ollama is unavailable or a response is invalid, a recorded survival fallback keeps the prototype moving. That fallback is a rule-based decision, not an LLM response.
+If Ollama is unavailable or a response is invalid, a recorded survival fallback keeps the prototype moving. That fallback is a rule-based decision, not an LLM response. Animals use explicit hardcoded NPC behavior in the simulation engine and never call the LLM.
 
 ## Spectator experience
 
@@ -30,14 +30,15 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 - Review age, health, hunger, thirst, energy, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
 - Select one installed Ollama model for the whole world. Each agent still has an independent identity and private history.
 - Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
-- Run, pause, advance one day, or reset the world. The minimalist spectator does not use a name roster or a visible timeline.
+- Run, pause, advance one day, or reset the world. During a run, agents receive a decision opportunity every 2.5 seconds while a complete day and night takes 60 seconds. Age, needs, seasons, disease progression, and ecology advance at day boundaries. The minimalist spectator does not use a name roster or a visible timeline.
+- Watch the globe's sunlight and the visible clock move through day and night. Every action appears above its agent. Dead people remain visible on the ground until a nearby agent chooses to mourn or bury them.
 - Inspect the world API and its retained event records for debugging and provenance.
 
 ## Technology
 
 - **Frontend:** Vite, Three.js, native HTML/CSS/JavaScript. It is a separate application, not rendered by FastAPI.
 - **Backend:** Python, FastAPI, Pydantic, HTTPX.
-- **Decision model:** Ollama, default model `gemma4:e2b`, shared across agents.
+- **Decision model:** Ollama, default model `qwen2.5:0.5b` (about 500 million parameters), shared across agents. `gemma4:e2b` remains available if installed.
 - **Persistence:** SQLite world snapshots.
 
 ## Local setup
@@ -47,7 +48,7 @@ Requirements: Python 3.11 or newer, Node.js 20 or newer, and Ollama. The backend
 ### 1. Install the model
 
 ```powershell
-ollama pull gemma4:e2b
+ollama pull qwen2.5:0.5b
 ```
 
 ### 2. Install dependencies
@@ -91,7 +92,7 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 - `GET /api/health` — API, Ollama, and configured model readiness.
 - `GET /api/models` — installed local models.
 - `GET /api/world` — authoritative world snapshot, including retained event records.
-- `POST /api/world/tick` — advance one simulated day and collect agent decisions.
+- `POST /api/world/tick` — manually advance one simulated day and collect one set of agent decisions.
 - `POST /api/world/run?interval_seconds=3` / `POST /api/world/pause` — start or stop autonomous simulation.
 - `POST /api/world/reset?seed=7` — start a fresh world.
 - `PATCH /api/world/model` — switch all agents to one shared model.
@@ -110,7 +111,7 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 
 ## Boundaries
 
-One tick is one simulated day. The starting period of 6–7 million years ago is thematic; the current small map, life-stage, disease, and hazard rules are simplified assumptions, not calibrated biology or history. LLMs propose choices but cannot directly mutate physics, consent, biology, or persistence.
+The run loop offers a new agent decision every 2.5 seconds; 60 seconds of real time advances one simulated day. The `tick` endpoint is a manual one-day step. The starting period of 6–7 million years ago is thematic; the current small map, life-stage, disease, and hazard rules are simplified assumptions, not calibrated biology or history. LLMs propose choices but cannot directly mutate physics, consent, biology, or persistence.
 
 ## License
 

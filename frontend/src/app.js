@@ -47,10 +47,10 @@ renderer.toneMappingExposure = 1.12;
 host.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x070b0c);
-scene.fog = new THREE.Fog(0x070b0c, 28, 68);
+scene.background = new THREE.Color(0xf4f5f1);
+scene.fog = new THREE.Fog(0xf4f5f1, 34, 82);
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 120);
-camera.position.set(0, 13, 30);
+camera.position.set(0, 10, 24);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0, 0);
 controls.enableDamping = true;
@@ -61,7 +61,8 @@ controls.minDistance = 11;
 controls.maxDistance = 40;
 controls.maxPolarAngle = Math.PI;
 
-scene.add(new THREE.HemisphereLight(0xd8e0d5, 0x1b261e, 1.65));
+const skyLight = new THREE.HemisphereLight(0xf4f7ff, 0x556255, 1.25);
+scene.add(skyLight);
 const sunlight = new THREE.DirectionalLight(0xffe3bf, 2.5);
 sunlight.position.set(-11, 20, 8);
 sunlight.castShadow = true;
@@ -69,7 +70,7 @@ sunlight.shadow.mapSize.set(2048, 2048);
 sunlight.shadow.camera.left = -22; sunlight.shadow.camera.right = 22;
 sunlight.shadow.camera.top = 22; sunlight.shadow.camera.bottom = -22;
 scene.add(sunlight);
-const coolFill = new THREE.DirectionalLight(0x7298a3, 0.55);
+const coolFill = new THREE.DirectionalLight(0x8296a0, 0.38);
 coolFill.position.set(8, 8, -12); scene.add(coolFill);
 
 const terrainGroup = new THREE.Group(); scene.add(terrainGroup);
@@ -248,12 +249,18 @@ function makeHumanoid(agent) {
     leg.userData.swingPhase = side < 0 ? Math.PI : 0;
     root.add(leg); limbs.push(leg);
   }
-  const selectionRing = new THREE.Mesh(new THREE.RingGeometry(0.27, 0.32, 28), new THREE.MeshBasicMaterial({ color: 0xc3e796, side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  const groundMarker = new THREE.Mesh(new THREE.TorusGeometry(0.28, 0.025, 5, 28), new THREE.MeshBasicMaterial({ color: 0x315f43, transparent: true, opacity: 0.9 }));
+  groundMarker.rotation.x = Math.PI / 2;
+  groundMarker.position.y = 0.045;
+  root.add(groundMarker);
+  const selectionRing = new THREE.Mesh(new THREE.RingGeometry(0.34, 0.4, 28), new THREE.MeshBasicMaterial({ color: 0x315f43, side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
   selectionRing.rotation.x = -Math.PI / 2;
   selectionRing.position.y = 0.025;
   selectionRing.visible = agent.id === selectedAgentId;
   root.add(selectionRing);
   root.userData.limbs = limbs; root.userData.selectionRing = selectionRing;
+  root.userData.bodyMeshes = [body, head, hair, ...limbs];
+  root.scale.setScalar(1.35);
   root.traverse((part) => { if (part.isMesh) { part.castShadow = true; part.receiveShadow = true; part.userData.agentId = agent.id; } });
   const label = document.createElement("div");
   label.className = "scene-label"; label.dataset.agentId = agent.id;
@@ -395,16 +402,37 @@ function syncObjects(nextWorld) {
     let figure = peopleMeshes.get(agent.id);
     if (!figure) {
       figure = makeHumanoid(agent);
-      orientOnGlobe(figure, agent.x, agent.y);
+      orientOnGlobe(figure, agent.x, agent.y, 0.28);
     }
-    const destination = worldToScene(agent.x, agent.y);
+    const destination = worldToScene(agent.x, agent.y, 0.28);
     figure.userData.destination = destination;
     figure.userData.moving = agent.last_action?.action === "move" && agent.alive;
+    figure.userData.working = agent.alive && !["move", "rest", "drink", "bond", "reproduce"].includes(agent.last_action?.action);
     figure.userData.dead = !agent.alive;
+    figure.userData.buried = agent.buried;
+    figure.visible = !agent.buried;
+    if (!agent.alive && !figure.userData.deathPoseApplied) {
+      // Dead bodies remain visible on the surface until someone chooses to bury them.
+      figure.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2));
+      figure.userData.deathPoseApplied = true;
+      figure.userData.bodyMeshes.forEach((part) => part.material.color.set(0x77736d));
+    }
+    if (agent.buried && !figure.userData.graveMarker) {
+      const grave = new THREE.Group();
+      const stone = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.48, 0.14), new THREE.MeshStandardMaterial({ color: 0x777e7a, roughness: 0.95 }));
+      stone.position.y = 0.25; grave.add(stone);
+      const inscription = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.045, 0.16), new THREE.MeshStandardMaterial({ color: 0xb6b8ac }));
+      inscription.position.y = 0.37; grave.add(inscription);
+      orientOnGlobe(grave, agent.x, agent.y, 0.05);
+      grave.traverse((part) => { if (part.isMesh) part.castShadow = true; });
+      peopleGroup.add(grave); figure.userData.graveMarker = grave;
+    }
     figure.userData.selectionRing.visible = agent.alive && agent.id === selectedAgentId;
-    figure.traverse((part) => { if (part.isMesh) { part.material.transparent = !agent.alive; part.material.opacity = agent.alive ? 1 : 0.34; } });
     const label = labels.get(agent.id);
-    label.textContent = agent.alive ? `${agent.name} · ${Math.floor(agent.age_days / 365)}` : `${agent.name} · deceased`;
+    const action = agent.last_action?.action?.replaceAll("_", " ");
+    label.textContent = agent.alive
+      ? `${agent.name} · ${action || "observing"}`
+      : agent.buried ? `${agent.name} · buried` : `${agent.name} · deceased`;
     label.classList.toggle("selected", agent.id === selectedAgentId);
     label.classList.toggle("dead", !agent.alive);
   }
@@ -448,12 +476,12 @@ function renderLabels() {
   const projected = new THREE.Vector3();
   for (const [id, figure] of peopleMeshes) {
     const label = labels.get(id);
-    projected.copy(figure.position).add(figure.position.clone().normalize().multiplyScalar(1.5)).project(camera);
+    projected.copy(figure.position).add(figure.position.clone().normalize().multiplyScalar(1.85)).project(camera);
     const x = (projected.x * 0.5 + 0.5) * host.clientWidth;
     const y = (-projected.y * 0.5 + 0.5) * host.clientHeight;
     label.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
     const frontFacing = figure.position.dot(camera.position) > 0;
-    label.style.display = frontFacing && projected.z < 1 && figure.position.clone().sub(camera.position).length() < 55 ? "block" : "none";
+    label.style.display = !figure.userData.buried && frontFacing && projected.z < 1 && figure.position.clone().sub(camera.position).length() < 55 ? "block" : "none";
   }
 }
 
@@ -467,9 +495,15 @@ function frame(now) {
     const nextPosition = figure.position.clone().lerp(destination, blend).normalize();
     const nextRadius = THREE.MathUtils.damp(figure.position.length(), destination.length(), 3.2, 1 / 60);
     figure.position.copy(nextPosition.multiplyScalar(nextRadius));
-    figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), blend);
-    const moving = figure.userData.moving && figure.position.distanceTo(destination) > 0.13;
-    figure.userData.limbs.forEach((limb) => { limb.rotation.x = moving ? Math.sin(now * 0.007 + limb.userData.swingPhase) * 0.48 : THREE.MathUtils.damp(limb.rotation.x, 0, 5, 1 / 60); });
+    if (!figure.userData.dead) figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), blend);
+    const moving = !figure.userData.dead && figure.userData.moving && figure.position.distanceTo(destination) > 0.13;
+    const working = !figure.userData.dead && figure.userData.working;
+    figure.userData.limbs.forEach((limb, index) => {
+      const armAtWork = working && index < 2;
+      limb.rotation.x = moving ? Math.sin(now * 0.007 + limb.userData.swingPhase) * 0.48
+        : armAtWork ? Math.sin(now * 0.005 + limb.userData.swingPhase) * 0.22
+          : THREE.MathUtils.damp(limb.rotation.x, 0, 5, 1 / 60);
+    });
     if (moving) figure.rotation.y += Math.sin(now * 0.001) * 0.002;
     figure.userData.selectionRing.rotation.z = now * 0.00045;
   }
@@ -479,10 +513,22 @@ function frame(now) {
     animal.position.lerp(animal.userData.destination, alpha).normalize().multiplyScalar(globeRadius + 0.3);
     animal.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), animal.position.clone().normalize()), alpha);
   }
+  updateDaylight();
   renderLabels();
   renderer.render(scene, camera);
 }
 requestAnimationFrame(frame);
+
+function updateDaylight() {
+  // One minute of real time maps to one full 24-hour day and night cycle.
+  const hour = (6 + ((world?.day_progress_seconds || 0) / (world?.day_length_seconds || 60)) * 24) % 24;
+  const sunHeight = Math.sin(((hour - 6) / 12) * Math.PI);
+  const daylight = THREE.MathUtils.clamp(sunHeight, 0, 1);
+  sunlight.intensity = 0.18 + daylight * 2.15;
+  skyLight.intensity = 0.55 + daylight * 1.0;
+  const angle = ((hour - 6) / 24) * Math.PI * 2;
+  sunlight.position.set(Math.cos(angle) * 18, Math.max(-4, sunHeight * 20), Math.sin(angle) * 18);
+}
 
 function statBar(name, value, lowIsBad = false) {
   const level = Number(value || 0);
@@ -500,7 +546,7 @@ function renderInspector() {
   const partner = world.agents.find((person) => person.id === agent.bonded_partner_id);
   const traits = Object.entries(agent.traits || {}).map(([name, score]) => `${name} ${Math.round(score * 100)}`).join(" · ") || "Not developed";
   const memories = [...(agent.memories || [])].slice(-4).reverse();
-  const condition = agent.alive ? (agent.disease ? `Ill · ${agent.disease}` : "Living") : "Deceased";
+  const condition = agent.alive ? (agent.disease ? `Ill · ${agent.disease}` : "Living") : agent.buried ? "Buried" : `Deceased · ${agent.death_cause || "unknown cause"}`;
   const symbol = agent.sex === "female" ? "♀" : "♂";
   ui.inspector.innerHTML = `<div class="inspector-content"><div class="inspector-head"><div class="agent-avatar">${symbol}</div><div><h2>${escapeHtml(agent.name)}</h2><p>${escapeHtml(age)} · ${escapeHtml(agent.sex)}</p></div><button class="close-inspector" aria-label="Close inspector">×</button></div>
     <div class="condition ${agent.alive ? "" : "dead"}">${escapeHtml(condition.toUpperCase())}</div>
@@ -529,15 +575,18 @@ function renderCulture() {
   $("#culture-count").textContent = String(groups.length + beliefs.length + structures.length + animals.filter((animal) => animal.animal_type !== "wild").length);
   const block = (title, values) => `<div class="culture-block"><h4>${title} · ${values.length}</h4><div class="chip-list">${values.length ? values.map((value) => `<span class="chip">${escapeHtml(value)}</span>`).join("") : '<span class="chip">None yet</span>'}</div></div>`;
   $("#culture-popover").innerHTML = `<h3>World culture</h3>${block("Structures", structures.map((item) => item.kind.replaceAll("_", " ")))}${block("Groups", groups.map((item) => `${item.name} · ${item.kind} · ${item.member_ids.length}`))}${block("Beliefs", beliefs.map((item) => `${item.name} · ${item.kind}`))}`;
-  $("#culture-popover").insertAdjacentHTML("beforeend", block("Animals", animals.filter((item) => item.alive).map((item) => `${item.species} · ${item.animal_type}${item.owner_agent_id ? " · cared for" : ""}`)) + block("Growing crops", crops.map((item) => `${item.crop_kind} · ${item.growth_days} days · ${Math.round(item.moisture)}% moisture`)));
+  $("#culture-popover").insertAdjacentHTML("beforeend", block("Animals · NPC", animals.filter((item) => item.alive).map((item) => `${item.species} · ${item.animal_type}${item.owner_agent_id ? " · cared for" : ""}`)) + block("Growing crops", crops.map((item) => `${item.crop_kind} · ${item.growth_days} days · ${Math.round(item.moisture)}% moisture`)));
 }
 
 function renderWorld(next) {
   world = next;
-  const year = Math.floor(world.tick / 365) + 1; const day = world.tick % 365 || 365;
+  const year = Math.floor(world.tick / 365) + 1; const day = (world.tick % 365) + 1;
   const living = world.agents.filter((agent) => agent.alive).length;
   const animalCount = (world.animals || []).filter((animal) => animal.alive).length;
-  ui.clock.textContent = `YEAR ${year} · DAY ${day}${world.processing ? " · THINKING" : ""}`;
+  const elapsedHours = (6 + ((world.day_progress_seconds || 0) / (world.day_length_seconds || 60)) * 24) % 24;
+  const hour = Math.floor(elapsedHours);
+  const minute = Math.floor((elapsedHours % 1) * 60);
+  ui.clock.textContent = `YEAR ${year} · DAY ${day} · ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}${world.processing ? " · THINKING" : ""}`;
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
@@ -556,7 +605,7 @@ async function refreshWorld() {
 async function refreshModels() {
   try {
     const [health, response] = await Promise.all([api("/api/health"), api("/api/models")]);
-    const selected = world?.global_model || health.default_model || "gemma4:e2b";
+  const selected = world?.global_model || health.default_model || "qwen2.5:0.5b";
     const options = (response.models || []).map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`);
     if (!response.models?.includes(selected)) options.unshift(`<option value="${escapeHtml(selected)}">${escapeHtml(selected)} · unavailable</option>`);
     ui.model.innerHTML = options.join("") || `<option value="${escapeHtml(selected)}">${escapeHtml(selected)}</option>`;
@@ -568,7 +617,7 @@ async function refreshModels() {
 ui.run.addEventListener("click", async () => {
   try {
     if (world?.running) await api("/api/world/pause", { method: "POST" });
-    else await api("/api/world/run?interval_seconds=3", { method: "POST" });
+    else await api("/api/world/run?interval_seconds=2.5", { method: "POST" });
     await refreshWorld();
   } catch (error) { notify(error.message, true); }
 });

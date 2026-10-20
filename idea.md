@@ -87,11 +87,14 @@ Property can be personal, family-held, shared, or group-controlled according to 
 
 The human is primarily an observer. The simulation runs autonomously after its rules and starting conditions are set, while the spectator can optionally intervene.
 
-The separate dark-themed frontend should let the spectator:
+The separate white-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
+- See a complete day and night cycle every 60 seconds of real time, with a matching clock. Agents make a new choice every few seconds; a decision does not automatically advance the day.
 - Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
+- Keep dead bodies visible on the ground. Nearby relatives receive the death in their memories and decide whether to mourn, bury, or attend to other needs. Burial leaves a grave marker.
+- Give animals hardcoded NPC behavior for movement, feeding, watering, health, illness, reproduction, and death. Animals do not make LLM calls.
 - Adjust selected biological stats through that person's inspector, with changes applied by simulation rules.
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.

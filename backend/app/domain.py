@@ -45,6 +45,8 @@ class EventKind(str, Enum):
     FOODBORNE_ILLNESS = "foodborne_illness"
     ANIMAL_BIRTH = "animal_birth"
     ANIMAL_DISEASE = "animal_disease"
+    MOURNING = "mourning"
+    BURIAL = "burial"
 
 
 ActionName = Literal[
@@ -64,6 +66,8 @@ ActionName = Literal[
     "water_crop",
     "harvest",
     "cook",
+    "mourn",
+    "bury",
     "build",
     "bond",
     "reproduce",
@@ -117,11 +121,12 @@ class TerrainCell(BaseModel):
 
 
 class Animal(BaseModel):
-    """An individual wild animal, domestic animal, or companion pet."""
+    """An individual rule-driven NPC animal; animals never call the LLM."""
 
     id: str
     species: str
     animal_type: Literal["wild", "domestic", "pet"] = "wild"
+    brain_type: Literal["npc"] = "npc"
     sex: Literal["male", "female"]
     age_days: int = Field(default=0, ge=0)
     x: int
@@ -163,6 +168,9 @@ class Agent(BaseModel):
     thirst: float = Field(default=15, ge=0, le=100)
     energy: float = Field(default=85, ge=0, le=100)
     alive: bool = True
+    # A dead body remains in the scene until another agent chooses to bury it.
+    buried: bool = False
+    death_cause: str | None = None
     disease: str | None = None
     disease_days: int = 0
     immune_to: list[str] = Field(default_factory=list)
@@ -235,8 +243,11 @@ class WorldState(BaseModel):
     id: str
     seed: int
     # One world-wide brain model is used by every independent person.
-    global_model: str = "gemma4:e2b"
+    global_model: str = "qwen2.5:0.5b"
     tick: int = 0
+    # Elapsed real-time seconds within the current one-minute simulated day.
+    day_progress_seconds: float = Field(default=0, ge=0)
+    day_length_seconds: float = Field(default=60, ge=1, le=3600)
     width: int = 12
     height: int = 8
     agents: list[Agent]
