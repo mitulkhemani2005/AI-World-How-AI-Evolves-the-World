@@ -193,3 +193,23 @@ test("blocked WebGL still updates the compatibility globe, picking, events and c
   assert.equal(app.worldEffects.active.size, 1);
   assert.equal(world.running, true);
 });
+
+test("shared weapons and rafts render, carried items follow figures, and death reasons are reported", async () => {
+  const { app, world, elements } = await loadWorldApp();
+  world.items = [{ id: "spear", kind: "spear", x: 17, y: 8, creator_agent_id: "Aru", durability: 100 },
+    { id: "raft", kind: "raft", x: 18, y: 8, creator_agent_id: "Nima", durability: 100, capacity: 4 }];
+  app.renderWorld(world); app.renderFrame(100);
+  assert.ok(app.sceneObjects.has("item-spear"));
+  assert.ok(app.sceneObjects.has("item-raft"));
+  world.agents[0].equipped_item_id = "spear";
+  world.items[0].holder_agent_id = "Aru";
+  app.renderWorld(world); app.renderFrame(200);
+  assert.equal(app.sceneObjects.has("item-spear"), false);
+  assert.equal(app.peopleMeshes.get("Aru").userData.equipmentVisual.userData.itemId, "spear");
+  world.agents[1].alive = false;
+  world.agents[1].death_cause = "a wolf attack";
+  world.agents[1].death_tick = 8;
+  app.renderWorld(world); app.renderFrame(300);
+  assert.equal(elements.get("#death-notices").hidden, false);
+  assert.ok(elements.get("#death-notices").innerHTML.includes("a wolf attack"));
+});

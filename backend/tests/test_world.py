@@ -27,6 +27,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
         # A fully observable habitat makes material and caregiving assertions deterministic.
         for cell in world.terrain:
             cell.kind = "grassland"
+            cell.moisture = 0.5
         for person in world.agents:
             person.x, person.y = 17, 8
         world.animals = []
@@ -181,6 +182,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
         farmer = world.agents[0]
         world.tech_level = 2
         farmer.inventory["wood"] = 6
+        farmer.hunger = 50  # A food shortage provides a real reason to make a farm.
         before = sum(node.quantity for node in world.resources if node.kind in {"fruit", "vegetable", "food"})
         self.assertTrue(self.engine._build(world, farmer, "farm").startswith("Built"))
         self.assertEqual(sum(node.quantity for node in world.resources if node.kind in {"fruit", "vegetable", "food"}), before)

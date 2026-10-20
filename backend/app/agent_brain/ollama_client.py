@@ -8,7 +8,8 @@ import httpx
 
 from app.domain import Agent, AgentAction, WorldState
 from app.settings import settings
-from app.simulation.rules import ADULT_AGE_DAYS, BUILDING_RULES, SHELTER_KINDS, reproduction_block
+from app.simulation.rules import ADULT_AGE_DAYS, BUILDING_RULES, SHELTER_KINDS, reproduction_block, ITEM_RECIPES, PREDATOR_SPECIES
+from app.simulation.planning import building_need, is_coast, item_needed, material_stock, site_problem, local_land
 
 
 class OllamaError(RuntimeError):
@@ -82,6 +83,12 @@ class OllamaClient:
                 "memories", "knowledge", "inventory", "traits", "pregnancy_days_remaining", "children")},
             "last_result": agent.last_result,
             "your_chosen_project": agent.construction_project,
+            "crafting_project": agent.crafting_project,
+            "coast": is_coast(world, agent.x, agent.y),
+            "nearby_animals": full["nearby_animals"][:5],
+            "shared_items": [{"kind": item.kind, "durability": round(item.durability), "in_use": bool(item.holder_agent_id)}
+                             for item in world.items if self._distance(agent.x, agent.y, item.x, item.y, world.width) <= 3][:5],
+            "aboard_raft": bool(agent.vehicle_id),
             "biome": full["current_biome"], "weather": world.weather,
             "local_people": [{key: person[key] for key in ("name", "distance", "alive", "age_years", "relationship", "family_offer", "is_your_bonded_partner")}
                              for person in full["nearby_agents"][:8]],
@@ -107,6 +114,9 @@ class OllamaClient:
             "A proposal remains available for several turns; each person independently agrees. "
             "The list is ordered by practical urgency, but the choice is yours. "
             "Finish useful work before switching goals. When materials for your chosen shelter are ready, build it. "
+            "Use and repair shared buildings/items instead of making duplicates. Make essentials for real needs. "
+            "Predators are dangerous: flee, learn weapon making, craft and equip protection. "
+            "To discover land across oceans, experiment with raft building at the coast, gather wood, craft, board, sail and disembark. "
             "A resource choice includes walking there first. Bonding/reproduction need independent mutual "
             "consent. Do not invent success. If speaking or creating a group/belief, supply a short message; "
             "when teaching, use the listed lesson exactly. Return choice and a short reason.\n"
@@ -159,6 +169,7 @@ class OllamaClient:
         distance = lambda item: OllamaClient._distance(agent.x, agent.y, item.x, item.y, world.width)
         resources = [node for node in world.resources if node.quantity > 0 and distance(node) <= 5]
         buildings = [item for item in world.structures if item.condition >= 20 and distance(item) <= 3]
+        stock = material_stock(world, agent)
         local_cell = next((cell for cell in world.terrain if cell.x == agent.x and cell.y == agent.y), None)
         if local_cell and local_cell.last_tended_tick != world.tick and (
             local_cell.condition < 95 or local_cell.fertility < 45 or local_cell.pollution > 10
@@ -173,18 +184,56 @@ class OllamaClient:
             add(2 if agent.energy < 20 else 12, "rest", "Recover energy and health")
 
         if agent.age_days >= ADULT_AGE_DAYS:
+            threats = [animal for animal in world.animals if animal.alive and animal.animal_type == "wild"
+                       and animal.species in PREDATOR_SPECIES and distance(animal) <= 3]
+            if threats:
+                add(3, "flee", "Get away from the nearby predator")
+                for animal in threats:
+                    if distance(animal) <= 1 and agent.equipped_item_id:
+                        add(4, "defend", f"Protect people from the {animal.species}", target_animal_id=animal.id)
+            for item in world.items:
+                if distance(item) > 1:
+                    continue
+                if item.durability < 70:
+                    add(22, "repair", f"Repair the shared {item.kind}", target_item_id=item.id)
+                if item.kind != "raft" and item.durability > 0 and item.id != agent.equipped_item_id:
+                    add(5 if threats else 36, "use_item", f"Equip the shared {item.kind}", target_item_id=item.id)
+                if item.kind == "raft" and item.durability > 0 and not agent.vehicle_id:
+                    add(51, "board", "Board the shared raft to explore beyond this coast", target_item_id=item.id)
+            for building in world.structures:
+                if building.condition < 70 and distance(building) <= 1:
+                    add(21, "repair", f"Repair the existing {building.kind} instead of rebuilding", target_structure_id=building.id)
+            for kind, cost in ITEM_RECIPES.items():
+                lesson = "raft building" if kind == "raft" else "weapon making"
+                relevant = is_coast(world, agent.x, agent.y) if kind == "raft" else any(animal.alive and distance(animal) <= 5 for animal in world.animals)
+                if lesson not in agent.knowledge:
+                    if kind == "stone_axe" or not relevant:
+                        continue
+                    experiment_cost = {"wood": 1} if kind == "raft" else {"wood": 1, "stone": 1}
+                    missing = next((name for name, amount in experiment_cost.items() if stock[name] < amount), None)
+                    priority = 14 if threats else 50
+                    if missing and any(node.kind == missing for node in resources):
+                        add(priority, "gather", f"Collect {missing} for a {lesson} experiment", resource_kind=missing)
+                    elif not missing:
+                        add(priority, "experiment", f"Experiment to discover {lesson}", item_kind=kind)
+                elif item_needed(world, agent, kind):
+                    missing = next((name for name, amount in cost.items() if stock[name] < amount), None)
+                    priority = 15 if threats else 33 if kind != "raft" else 50
+                    if missing and any(node.kind == missing for node in resources):
+                        add(priority, "gather", f"Collect {missing} for a shared {kind}", resource_kind=missing, item_kind=kind)
+                    elif not missing:
+                        add(priority, "craft", f"Craft a needed shared {kind}", item_kind=kind)
             # An unsheltered individual can choose a material-to-building sequence at any time of day.
             projects = [kind for kind, (level, _) in BUILDING_RULES.items()
-                        if level <= world.tech_level and not any(item.kind == kind for item in buildings)]
+                        if level <= world.tech_level and building_need(world, agent, kind)
+                        and any(distance(cell) <= 4 and not site_problem(world, kind, cell.x, cell.y) for cell in world.terrain)]
             if agent.construction_project in projects:
                 projects = [agent.construction_project]
             has_cover = any(item.kind in SHELTER_KINDS for item in buildings)
             for kind in projects:
-                if has_cover and kind in SHELTER_KINDS:
-                    continue
                 priority = 20 if kind in SHELTER_KINDS else 34
                 missing = [name for name, amount in BUILDING_RULES[kind][1].items()
-                           if agent.inventory.get(name, 0) < amount]
+                           if stock.get(name, 0) < amount]
                 if not missing:
                     add(priority, "build", f"Build {kind.replace('_', ' ')} with collected materials", structure_type=kind)
                 else:
@@ -221,7 +270,8 @@ class OllamaClient:
                     add(15 if person.id in agent.children_ids else 30, "help", f"Care for {person.name}", target_agent_id=person.id)
                 if lesson:
                     add(29, "teach", f"Teach {person.name}: {lesson}", target_agent_id=person.id, message=lesson)
-                add(85, "fight", f"Confront {person.name}", target_agent_id=person.id)
+                hostile = agent.relationship_scores.get(person.id, 0) < -10 and agent.traits.get("aggression", 0.5) > 0.6
+                add(24 if hostile else 85, "fight", f"Confront {person.name} over the conflict" if hostile else f"Confront {person.name}", target_agent_id=person.id)
             add(52, "communicate", f"Share an idea with {person.name}", target_agent_id=person.id,
                 message=f"I have learned {agent.knowledge[-1]}." if agent.knowledge else "We need food, water and shelter.")
 
@@ -248,10 +298,34 @@ class OllamaClient:
         for group in world.groups:
             if any(person.id in group.member_ids and person.alive and distance(person) <= 3 for person in world.agents):
                 add(72, "join_group", f"Join {group.name}", target_group_id=group.id)
-        if can_reflect and (len(agent.knowledge) >= 3 or any("died" in memory or "storm" in memory for memory in agent.memories)):
+        if can_reflect and any(person.alive and person.id != agent.id and distance(person) <= 3 for person in world.agents) and (len(agent.knowledge) >= 3 or any("died" in memory or "storm" in memory for memory in agent.memories)):
             for kind in ("myth", "deity", "virtue", "evil", "taboo"):
+                if any(belief.kind == kind and belief.creator_agent_id == agent.id for belief in world.beliefs):
+                    continue
                 add(80, "create_belief", f"Develop a {kind} belief", belief_type=kind, message="A story about the living world")
         exploration = []
+        if agent.vehicle_id or any(item.kind == "raft" and item.durability > 0 and distance(item) <= 1 for item in world.items):
+            walkable = local_land(world, agent, 5)
+            frontiers = [cell for cell in world.terrain if cell.kind not in {"ocean", "mountain", "ice"}
+                         and (cell.x, cell.y) not in walkable and distance(cell) <= 5
+                         and f"{cell.x}:{cell.y}" not in agent.visited_cells]
+            for cell in sorted(frontiers, key=distance)[:2]:
+                add(43, "explore", f"Use the raft to reach visible unfamiliar land at ({cell.x}, {cell.y})",
+                    destination_x=cell.x, destination_y=cell.y)
+        if agent.vehicle_id:
+            cell = next((cell for cell in world.terrain if cell.x == agent.x and cell.y == agent.y), None)
+            if cell and cell.kind != "ocean":
+                # A newly boarded coastal raft must first be allowed to launch.
+                if agent.has_sailed:
+                    add(18, "disembark", "Step onto the newly reached land")
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = (agent.x + dx) % world.width, agent.y + dy
+                destination = next((cell for cell in world.terrain if cell.x == nx and cell.y == ny), None)
+                if destination and destination.kind not in {"mountain", "ice"} and (destination.kind == "ocean" or cell and cell.kind == "ocean"):
+                    visited = f"{nx}:{ny}" in agent.visited_cells
+                    landing = destination.kind != "ocean"
+                    add(18 if landing and not visited else 60 if landing else 65 if visited else 47,
+                        "sail", "Land on the visible unfamiliar shore" if landing and not visited else "Explore beyond this coast by raft", dx=dx, dy=dy)
         for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
             nx, ny = (agent.x + dx) % world.width, agent.y + dy
             cell = next((item for item in world.terrain if item.x == nx and item.y == ny), None)
@@ -266,7 +340,8 @@ class OllamaClient:
         result, seen = [], set()
         for _, action in ranked:
             key = (action.action, action.dx, action.dy, action.resource_kind, action.structure_type,
-                   action.target_agent_id, action.target_animal_id, action.target_group_id, action.belief_type, action.group_type)
+                   action.target_agent_id, action.target_animal_id, action.target_group_id, action.belief_type, action.group_type,
+                   action.item_kind, action.target_item_id, action.target_structure_id, action.destination_x, action.destination_y)
             if key not in seen:
                 seen.add(key)
                 result.append(action)
@@ -286,7 +361,8 @@ class OllamaClient:
         return [
             kind for kind, (level, costs) in BUILDING_RULES.items()
             if world.tech_level >= level
-            and all(agent.inventory.get(resource, 0) >= amount for resource, amount in costs.items())
+            and building_need(world, agent, kind)
+            and all(material_stock(world, agent).get(resource, 0) >= amount for resource, amount in costs.items())
         ]
 
     @staticmethod
@@ -434,7 +510,10 @@ class OllamaClient:
             "gather", "hunt", "tame", "tend_animal", "collect_animal_food",
             "plant", "water_crop", "harvest", "cook", "build", "bond",
             "reproduce", "fight", "form_group", "join_group", "create_belief", "mourn", "bury", "tend_terrain",
+            "craft", "use_item", "drop_item", "repair", "experiment", "board", "sail", "disembark", "defend", "flee", "explore",
         }
+        if agent.vehicle_id:
+            actions.discard("move")
         visible = [
             node for node in world.resources if node.quantity > 0
             and OllamaClient._distance(node.x, node.y, agent.x, agent.y, world.width) <= 5
@@ -478,7 +557,7 @@ class OllamaClient:
         if not any(not reproduction_block(world, agent, person) for person in nearby):
             actions.discard("reproduce")
         if agent.age_days < ADULT_AGE_DAYS:
-            for action in ("build", "fight", "form_group", "bond", "reproduce", "hunt", "tame", "plant", "cook"):
+            for action in ("build", "fight", "form_group", "bond", "reproduce", "hunt", "tame", "plant", "cook", "craft", "experiment", "sail", "defend", "explore"):
                 if action in actions:
                     actions.discard(action)
         if not OllamaClient._available_buildings(agent, world) and "build" in actions:

@@ -1,7 +1,7 @@
 """Shared constants for agent decisions and authoritative world validation."""
 
 ADULT_AGE_DAYS = 16 * 365
-PREGNANCY_DAYS = 270
+PREGNANCY_DAYS = 90
 MAX_POPULATION = 128
 # Keep wildlife a modest renewable food source instead of filling every terrain cell.
 MAX_WILD_ANIMALS = 24
@@ -15,6 +15,10 @@ DISEASES = (
 FOOD_KINDS = {"food", "fruit", "vegetable", "meat", "cooked_meat", "eggs", "milk"}
 FARMABLE_TERRAIN = {"plains", "grassland", "farmland", "forest", "river", "lake"}
 SHELTER_KINDS = {"lean_to", "hut", "home", "communal_house"}
+SHELTER_CAPACITY = {"lean_to": 2, "hut": 4, "home": 6, "communal_house": 12}
+PREDATOR_SPECIES = {"wolf", "big_cat"}
+# Crafting is explicit material work. Raft construction also requires an agent's discovery.
+ITEM_RECIPES = {"spear": {"wood": 2, "stone": 1}, "stone_axe": {"wood": 1, "stone": 2}, "raft": {"wood": 6}}
 TRAIT_NAMES = ("curiosity", "cooperation", "aggression", "resilience", "sociability")
 
 

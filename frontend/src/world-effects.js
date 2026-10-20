@@ -26,7 +26,7 @@ export class WorldEffects {
       if (this.seen.has(event.id)) continue;
       this.seen.add(event.id);
       const kind = event.details?.event || ({ terrain_care: "terrain_care", disease_started: "disease_outbreak",
-        animal_disease: "disease_outbreak", injury: "injury" })[event.kind];
+        animal_disease: "disease_outbreak", injury: "injury", predator_attack: "injury", fight: "injury" })[event.kind];
       const subject = (world.agents || []).find((agent) => event.agent_ids?.includes(agent.id))
         || (world.animals || []).find((animal) => animal.id === event.details?.animal_id);
       const x = event.details?.x ?? subject?.x, y = event.details?.y ?? subject?.y;

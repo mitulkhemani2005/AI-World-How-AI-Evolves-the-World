@@ -51,6 +51,7 @@ body,.app-shell{background:#f4f5f1}
 .scene-status[hidden]{display:none}
 .action-explanation{margin-top:12px;padding:10px;border-radius:6px;background:#eef2e9;color:#40503a;font-size:11px;line-height:1.5}
 .world-tooltip{position:absolute;z-index:12;width:248px;pointer-events:none;display:grid;gap:6px;padding:13px 15px;border:1px solid #cbd5c5;border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 10px 35px #263a2420;color:#344330;font-size:11px;line-height:1.4}
+.death-notices{position:absolute;z-index:7;right:20px;top:112px;max-width:270px;display:grid;gap:8px}.death-notices[hidden]{display:none}.death-report{padding:12px 14px;border:1px solid #ddc7bb;border-radius:9px;background:#fffdf9;color:#634438;font-size:11px;line-height:1.5;text-align:left;cursor:pointer}.death-report b,.death-report span{display:block}.death-report small{color:#817267}
 .world-tooltip strong{text-transform:capitalize;font-size:13px}.world-tooltip[hidden]{display:none}.world-tooltip span{display:block;color:#5b6b54}
 .speed-picker{display:grid;gap:4px;margin-right:10px}.speed-picker span{font:8px var(--mono);letter-spacing:.1em;color:#738076}.speed-picker select{border:0;background:transparent;color:#3e5138;font-size:11px;max-width:120px}
 .world-scene.event-armed{cursor:crosshair}

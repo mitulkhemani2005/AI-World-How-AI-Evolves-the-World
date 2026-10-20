@@ -41,10 +41,13 @@ from app.simulation.rules import (
     FAMILY_OFFER_DAYS,
     animal_capacity,
     reproduction_block,
+    ITEM_RECIPES, PREDATOR_SPECIES,
 )
+from app.simulation.activities import ActivityRules
+from app.simulation.planning import building_need, consume_materials, item_needed, material_stock, site_problem
 
 
-class SimulationEngine:
+class SimulationEngine(ActivityRules):
     """Runs a single persisted world; model output never mutates state directly."""
 
     def __init__(self, database_path: str | None = None) -> None:
@@ -83,6 +86,17 @@ class SimulationEngine:
             structure.y = min(max(structure.y, 0), self.state.height - 1)
         # Preserve the spectator's run/pause choice across application restarts.
         self.state.processing = False
+        if self.state.rules_version < 2:
+            for person in self.state.agents:
+                if person.pregnancy_days_remaining is not None:
+                    person.pregnancy_days_remaining = math.ceil(person.pregnancy_days_remaining / 3)
+            self.state.rules_version = 2
+        for person in self.state.agents:
+            if not person.alive and not person.death_details:
+                # Historical snapshots cannot identify a fatal blow that was never recorded.
+                person.death_details = {"cause": person.death_cause or "Unrecorded historical cause",
+                    "hunger": person.hunger, "thirst": person.thirst, "energy": person.energy,
+                    "disease": person.disease, "attribution": "legacy snapshot; exact fatal damage was not retained"}
         self._rebalance_animals(self.state)
         self._save()
 
@@ -92,6 +106,7 @@ class SimulationEngine:
             id=str(uuid4()),
             seed=seed,
             global_model=settings.ollama_model,
+            rules_version=2,
             width=36,
             height=18,
             day_length_seconds=settings.day_length_seconds,
@@ -306,6 +321,14 @@ class SimulationEngine:
             animals.append(Animal(id=str(uuid4()), species=species, sex=self._random.choice(("male", "female")),
                                   age_days=self._random.randint(200, 1200), x=animal_x,
                                   y=animal_y, hunger=20, temperament=self._random.uniform(0.15, 0.7)))
+        # One distant predator creates a discoverable danger without attacking the founders at spawn.
+        far = [cell for cell in habitat_cells if self._distance(founder, cell) >= 6]
+        if far and len(animals) < animal_capacity(world):
+            cell = self._random.choice(far)
+            animals.append(Animal(id=str(uuid4()), species="wolf", sex="female", x=cell.x, y=cell.y, age_days=700, hunger=35))
+        elif far and animals:
+            animals[0].species = "wolf"
+            animals[0].x, animals[0].y = far[0].x, far[0].y
         return animals
 
     async def reset(self, seed: int = 7) -> WorldState:
@@ -479,6 +502,13 @@ class SimulationEngine:
             async with self._lock:
                 world = self.state
                 world.processing = True
+                for person in world.agents:
+                    if person.construction_project and not building_need(world, person, person.construction_project):
+                        person.construction_project = None
+                        person.pending_action = None
+                    if person.crafting_project and not item_needed(world, person, person.crafting_project):
+                        person.crafting_project = None
+                        person.pending_action = None
                 self._advance_time(world, elapsed_seconds, force_day)
                 world_id = world.id
                 decision_epoch = self._decision_epoch
@@ -554,6 +584,8 @@ class SimulationEngine:
                         continue
                     if action.structure_type in BUILDING_RULES and action.action in {"gather", "build"}:
                         agent.construction_project = action.structure_type
+                    if action.item_kind in ITEM_RECIPES and action.action in {"gather", "craft"}:
+                        agent.crafting_project = action.item_kind
                     if action.action in {"bond", "reproduce"}:
                         agent.pending_action = None
                         partner_id = action.target_agent_id
@@ -581,11 +613,13 @@ class SimulationEngine:
                             self._record_action(world, agent, action, "Proposed a family choice; waiting for the partner's independent answer.")
                     else:
                         # Translate a resource-seeking choice into a path step when the resource is not underfoot.
-                        resolved_action = self._prepare_corpse_action(world, agent, action)
+                        resolved_action = self._prepare_construction(world, agent, action)
+                        if resolved_action is action:
+                            resolved_action = self._prepare_corpse_action(world, agent, action)
                         if resolved_action is action:
                             resolved_action = self._prepare_resource_action(world, agent, action)
                         agent.pending_action = action.model_copy(deep=True) if (
-                            resolved_action.action == "move" and action.action != "move"
+                            resolved_action.action in {"move", "board", "sail", "disembark"} and resolved_action.action != action.action
                         ) else None
                         result = self._apply_action(world, agent, resolved_action)
                         # A chosen building project can gather its batch without repeatedly asking the brain.
@@ -596,6 +630,10 @@ class SimulationEngine:
                                 agent.pending_action = action.model_copy(deep=True)
                         if result.startswith("Built") and action.structure_type == agent.construction_project:
                             agent.construction_project = None
+                        if action.action == "gather" and action.item_kind in ITEM_RECIPES:
+                            cost = ITEM_RECIPES[action.item_kind]
+                            if resolved_action.action == "gather" and result.startswith("Gathered") and material_stock(world, agent).get(action.resource_kind or "wood", 0) < cost.get(action.resource_kind or "wood", 0):
+                                agent.pending_action = action.model_copy(deep=True)
                         self._record_action(
                             world,
                             agent,
@@ -700,10 +738,17 @@ class SimulationEngine:
 
     def _apply_action(self, world: WorldState, agent: Agent, action: AgentAction) -> str:
         """Resolve one non-consensual action against authoritative world state."""
-        if self._is_child(agent) and action.action in {"build", "fight", "form_group", "reproduce", "bond", "hunt", "tame", "plant", "cook", "bury"}:
+        if self._is_child(agent) and action.action in {"build", "fight", "form_group", "reproduce", "bond", "hunt", "tame", "plant", "cook", "bury", "craft", "experiment", "sail", "defend", "explore"}:
             return "This person is too young for that action."
 
+        activity = self._activity(world, agent, action)
+        if activity is not None:
+            return activity
+
         if action.action == "move":
+            if agent.vehicle_id:
+                current = self._terrain_at(world, agent.x, agent.y)
+                return self._disembark(world, agent) if current and current.kind != "ocean" else "Sail the raft instead of walking across water."
             # Resolve diagonal proposals into one cardinal step so movement has consistent speed.
             dx, dy = action.dx, action.dy
             if dx and dy:
@@ -716,6 +761,7 @@ class SimulationEngine:
             if (next_x, next_y) == (agent.x, agent.y):
                 return "Stayed in place; no movement step was proposed."
             agent.x, agent.y = next_x, next_y
+            self._move_equipment(world, agent)
             # Infants travel with an available parent; they cannot navigate using an LLM yet.
             for child in world.agents:
                 caregiver = next((parent_id for parent_id in child.parent_ids
@@ -1080,19 +1126,24 @@ class SimulationEngine:
         if exposed:
             agent.energy = max(0, agent.energy - 6)
             if world.weather == "cold":
-                agent.health = max(0, agent.health - (0.4 if agent.age_days < 6 * 365 else 0.7))
+                if self._hurt(world, agent, 0.4 if agent.age_days < 6 * 365 else 0.7, "cold exposure without shelter"):
+                    return
             elif world.weather == "rain" and agent.disease is None and self._random.random() < 0.002:
                 self._infect(world, agent, "respiratory illness", EventSource.NATURAL)
 
         if agent.hunger >= 85:
-            agent.health = max(0, agent.health - 2.0)
+            if self._hurt(world, agent, 2, "starvation"):
+                return
         if agent.thirst >= 85:
-            agent.health = max(0, agent.health - 4.0)
+            if self._hurt(world, agent, 4, "dehydration"):
+                return
         if agent.energy <= 5:
-            agent.health = max(0, agent.health - 1.0)
+            if self._hurt(world, agent, 1, "exhaustion"):
+                return
 
         if agent.disease:
-            agent.health = max(0, agent.health - (3 if agent.disease == "wound infection" else 2))
+            if self._hurt(world, agent, 3 if agent.disease == "wound infection" else 2, agent.disease):
+                return
             agent.disease_days += 1
             if agent.disease_days >= 5 and self._random.random() < 0.15:
                 disease = agent.disease
@@ -1117,9 +1168,12 @@ class SimulationEngine:
             # Age raises risk gradually; other hazards can still kill at any age.
             daily_age_risk = min(0.002, (agent.age_days - 45 * 365) / (35 * 365 * 12000))
             if self._random.random() < daily_age_risk:
-                agent.health = max(0, agent.health - 18)
+                if self._hurt(world, agent, 18, "age-related health decline"):
+                    return
                 self._record(world, EventSource.NATURAL, EventKind.INJURY, f"{agent.name} suffered an age-related health decline.", [agent.id])
-        self._check_death(world, agent, "illness or unmet biological needs")
+        cell = self._terrain_at(world, agent.x, agent.y)
+        if cell and cell.kind == "ocean" and not any(item.id == agent.vehicle_id and item.durability > 0 for item in world.items):
+            self._hurt(world, agent, 12, "drowning without a seaworthy raft")
 
     def _share_food_with_dependents(self, world: WorldState, parent: Agent, node: ResourceNode) -> None:
         """Consume one extra gathered unit to reduce hunger for a nearby child."""
@@ -1232,6 +1286,8 @@ class SimulationEngine:
                 spoilage_rate = 0.65 if node.kind in {"meat", "eggs", "milk"} else 0.16
                 if node.kind == "cooked_meat":
                     spoilage_rate = 0.12
+                if any(building.kind == "granary" and building.condition >= 20 and self._distance(node, building) <= 2 for building in world.structures):
+                    spoilage_rate *= 0.35
                 node.contamination = min(100, node.contamination + spoilage_rate)
                 if node.days_old % 12 == 0 and node.contamination > 75:
                     node.quantity = max(0, node.quantity - 1)
@@ -1241,6 +1297,7 @@ class SimulationEngine:
         self._rebalance_animals(world)
         self._advance_crops(world)
         self._advance_animals(world)
+        self._predator_encounters(world)
         self._spawn_wildlife(world)
         for cell in world.terrain:
             if cell.kind in FARMABLE_TERRAIN and cell.moisture > 0.2:
@@ -1261,6 +1318,10 @@ class SimulationEngine:
             owner = next((person for person in world.agents if person.id == animal.owner_agent_id and person.alive), None)
             if animal.animal_type == "pet" and owner:
                 target = (owner.x, owner.y)
+            elif animal.species in PREDATOR_SPECIES and animal.hunger >= 30:
+                prey = [person for person in world.agents if person.alive and self._distance(person, animal) <= 4]
+                person = min(prey, key=lambda person: self._distance(person, animal), default=None)
+                target = (person.x, person.y) if person else None
             else:
                 needs = [node for node in world.resources if node.quantity > 0
                          and (node.kind == "water" if animal.thirst > 45 else node.kind in FOOD_KINDS)
@@ -1292,6 +1353,9 @@ class SimulationEngine:
             animal = Animal(id=str(uuid4()), species=self._random.choice(species[cell.kind]),
                             sex=self._random.choice(("male", "female")), age_days=self._random.randint(100, 700),
                             x=cell.x, y=cell.y, temperament=self._random.uniform(0.1, 0.8))
+            if (cell.kind in {"forest", "boreal_forest", "rainforest"} and self._random.random() < 0.12
+                and sum(item.alive and item.species in PREDATOR_SPECIES for item in world.animals) < 2):
+                animal.species = "big_cat" if cell.kind == "rainforest" else "wolf"
             world.animals.append(animal)
             remaining -= 1
             self._record(world, EventSource.NATURAL, EventKind.ANIMAL_SPAWNED,
@@ -1421,6 +1485,7 @@ class SimulationEngine:
                              f"A {animal.species} died from illness or unmet needs.", [],
                              {"animal_id": animal.id, "species": animal.species})
             elif (animal.sex == "female" and animal.age_days >= 180 and world.tick - animal.last_birth_tick >= 120
+                  and (animal.species not in PREDATOR_SPECIES or sum(item.alive and item.species in PREDATOR_SPECIES for item in world.animals) < 2)
                   and animal.hunger < 45 and animal.thirst < 60
                   and sum(item.alive and (item.animal_type == "wild") == (animal.animal_type == "wild")
                           for item in world.animals) < animal_capacity(world, wild=animal.animal_type == "wild")
@@ -1539,14 +1604,19 @@ class SimulationEngine:
     def _build(self, world: WorldState, agent: Agent, kind: str) -> str:
         if kind not in BUILDING_RULES:
             return "That kind of structure is not known in this world."
+        problem = site_problem(world, kind, agent.x, agent.y)
+        if problem:
+            return problem
+        if not building_need(world, agent, kind):
+            agent.construction_project = None
+            return "Existing shared buildings already meet this local need. Use or repair them."
         required_level, cost = BUILDING_RULES[kind]
         if world.tech_level < required_level:
             return f"The community has not discovered the knowledge needed to build a {kind.replace('_', ' ')}."
-        missing = [name for name, amount in cost.items() if agent.inventory.get(name, 0) < amount]
+        missing = [name for name, amount in cost.items() if material_stock(world, agent).get(name, 0) < amount]
         if missing:
             return f"Not enough materials; gather {', '.join(missing)} first."
-        for name, amount in cost.items():
-            agent.inventory[name] -= amount
+        consume_materials(world, agent, cost)
         structure = Structure(
             id=str(uuid4()), kind=kind, x=agent.x, y=agent.y,
             owner_agent_id=agent.id,
@@ -1619,11 +1689,20 @@ class SimulationEngine:
         if not target:
             return "There was no nearby target for the fight."
         damage = self._random.randint(5, 18) + round(agent.traits.get("aggression", 0.5) * 8)
-        target.health = max(0, target.health - damage)
+        weapon, defence = self._weapon(world, agent), self._weapon(world, target)
+        if weapon:
+            damage += 6
+            weapon.durability = max(0, weapon.durability - 4)
+        if defence:
+            damage = max(1, round(damage * 0.65))
+            defence.durability = max(0, defence.durability - 3)
+        family = target.id in agent.parent_ids + agent.children_ids or agent.id in target.parent_ids or agent.bonded_partner_id == target.id
+        same_group = any(agent.id in group.member_ids and target.id in group.member_ids for group in world.groups)
+        scope = "family" if family else "internal" if same_group else "external"
+        self._hurt(world, target, damage, f"injuries from a fight with {agent.name}", EventSource.AGENT_ACTION)
         agent.energy = max(0, agent.energy - 12)
         self._adjust_relationship(agent, target, -30)
-        self._record(world, EventSource.AGENT_ACTION, EventKind.FIGHT, f"{agent.name} fought {target.name} and caused {damage} injury.", [agent.id, target.id], {"damage": damage})
-        self._check_death(world, target, "violence", EventSource.AGENT_ACTION)
+        self._record(world, EventSource.AGENT_ACTION, EventKind.FIGHT, f"{agent.name} fought {target.name} and caused {damage} injury.", [agent.id, target.id], {"damage": damage, "scope": scope, "weapon": weapon.kind if weapon else None})
         return f"Fought {target.name}."
 
     def _form_group(self, world: WorldState, agent: Agent, proposed_name: str, kind: str) -> str:
@@ -1769,10 +1848,18 @@ class SimulationEngine:
         if agent.alive and agent.health <= 0:
             agent.alive = False
             agent.death_cause = cause
+            agent.death_tick = world.tick
+            agent.death_details = {"cause": cause, "day": world.tick, "hunger": round(agent.hunger, 1),
+                "thirst": round(agent.thirst, 1), "energy": round(agent.energy, 1), "disease": agent.disease,
+                "last_injury": agent.last_injury.copy(), "attribution": "observed simulation consequence"}
+            agent.family_offer = None
+            agent.pending_action = None
+            self._drop_item(world, agent)
+            agent.vehicle_id = None
             related_people = [person for person in world.agents if person.alive and self._is_related(person, agent)]
             for relative in related_people:
                 self._remember(relative, f"{agent.name}, your relative, died from {cause}. Their body remains nearby.")
-            self._record(world, source, EventKind.DEATH, f"{agent.name} died at age {agent.age_years} from {cause}.", [agent.id], {"age_years": agent.age_years, "cause": cause})
+            self._record(world, source, EventKind.DEATH, f"{agent.name} died at age {agent.age_years} from {cause}.", [agent.id], {"age_years": agent.age_years, **agent.death_details, "x": agent.x, "y": agent.y})
             # Keep a group's leadership attached to living members after a death.
             for group in world.groups:
                 if group.leader_agent_id == agent.id:
@@ -1782,6 +1869,15 @@ class SimulationEngine:
                             candidates,
                             key=lambda member: member.traits.get("sociability", 0.5),
                         ).id
+
+    def _hurt(self, world, person, amount, cause, source=EventSource.NATURAL):
+        """Attribute the fatal damage immediately, before later daily effects can obscure it."""
+        if not person.alive:
+            return True
+        person.last_injury = {"cause": cause, "damage": amount, "day": world.tick}
+        person.health = max(0, person.health - amount)
+        self._check_death(world, person, cause, source)
+        return not person.alive
 
     @staticmethod
     def _is_related(first: Agent, second: Agent) -> bool:
@@ -1880,6 +1976,8 @@ class SimulationEngine:
         goal = (node.x, node.y)
         if start == goal:
             return AgentAction(action=action, reason=reason, resource_kind=resource_kind)
+        boat = next((item for item in world.items if item.kind == "raft" and item.durability > 0 and
+                     (item.id == agent.vehicle_id or self._distance(agent, item) <= 1)), None)
         # Breadth-first pathfinding follows habitable spherical cells and routes around oceans.
         # Index once per route; scanning all 648 cells for every neighbor stalls fast body updates.
         terrain_kinds = {(cell.x, cell.y): cell.kind for cell in world.terrain}
@@ -1894,7 +1992,7 @@ class SimulationEngine:
                 nx, ny = neighbor
                 if not (0 <= ny < world.height) or neighbor in previous:
                     continue
-                if terrain_kinds.get(neighbor) == "ocean":
+                if terrain_kinds.get(neighbor) == "ocean" and not boat:
                     continue
                 previous[neighbor] = current
                 queue.append(neighbor)
@@ -1907,6 +2005,13 @@ class SimulationEngine:
                 return AgentAction(action="rest", reason="No safe route was found.")
         dx = (step[0] - start[0] + world.width // 2) % world.width - world.width // 2
         dy = step[1] - start[1]
+        if agent.vehicle_id and terrain_kinds.get(start) != "ocean" and terrain_kinds.get(step) != "ocean":
+            return AgentAction(action="disembark", reason="Leave the raft before walking inland")
+        if terrain_kinds.get(step) == "ocean" or terrain_kinds.get(start) == "ocean":
+            if boat and not agent.vehicle_id:
+                return AgentAction(action="board", target_item_id=boat.id, reason="Use the shared raft to cross water")
+            if boat:
+                return AgentAction(action="sail", dx=max(-1, min(1, dx)), dy=max(-1, min(1, dy)), reason=reason)
         return AgentAction(action="move", dx=max(-1, min(1, dx)), dy=max(-1, min(1, dy)),
                            reason=reason, resource_kind=resource_kind)
 

@@ -28,6 +28,8 @@
         ├── api/routes.py               # HTTP API endpoints
         ├── agent_brain/ollama_client.py# Private observations, available choices, and model calls
         ├── simulation/engine.py        # Agent decisions plus authoritative biology, ecology, and NPC rules
+        ├── simulation/planning.py      # Shared demand, dry-land sites, capacity and family material pools
+        ├── simulation/activities.py    # Shared tools, repairs, raft exploration and predator encounters
         ├── simulation/rules.py         # Shared age, disease, population, and building constraints
         └── storage/sqlite_store.py     # SQLite snapshot persistence
 ```
@@ -115,3 +117,19 @@ For production, `npm run build --prefix frontend` creates a separate `frontend/d
 - `_survival_reflexes` is the explicitly recorded physical response to urgent needs while model calls wait. Its actions obey normal routing and resource use; it never proposes bonds or reproduction. Infants travel with the primary living parent.
 - `_rebalance_animals`, `_spawn_wildlife`, `_seed_animals`, `_advance_animals`, and `_tame` use the shared animal budget. Migration removes surplus saved-world animals rather than killing them into meat stockpiles.
 - `backend/tests/test_family_and_ecology.py` covers cross-round consent, expiry, partner approach, birth, recovery, resource-consuming reflexes, animal limits, infant travel, and preserved lineage after parent death.
+
+## Construction, shared tools, exploration and death reports
+
+| File | Debugging responsibility |
+| --- | --- |
+| `backend/app/simulation/planning.py` | Shared `building_need`, `site_problem`, land-connected settlements, material pools/consumption, and `item_needed`. Both the LLM menu and resolver use these rules. |
+| `backend/app/simulation/activities.py` | Engine mixin for experiments, crafting, public item handovers, repair, boarding, sailing, landing, fleeing and predator defence. |
+| `backend/tests/test_settlements_and_exploration.py` | Specific fatal causes, 90-day gestation/migration, real shared material costs, site validation, duplicate rejection, shared equipment, island crossings, boarding completion, and predator/family conflict. |
+
+`WorldState.items` contains shared physical objects with creator, current holder, location, capacity and durability. `Agent.equipped_item_id`, `vehicle_id` and `has_sailed` distinguish carried weapons from boat passengers. Objects follow their user; abandoned equipment can be reused. Tool ownership does not grant exclusive use, but a hostile current holder can refuse a handover.
+
+Boarding/sailing are discrete completed actions. A resource or construction intention may continue through those travel steps, but a direct board action must not remain pending and repeat forever. `_move_or_act` allows water routes only with a seaworthy raft, and requests boarding, sailing or disembarking as appropriate. Walking choices are excluded while aboard. Nearby unfamiliar landing sites receive attention before further ocean wandering. A model-selected `explore` intention stores `destination_x`/`destination_y` and continues through the physical transport steps until landing, rather than asking for a new random direction at every step.
+
+`_hurt` attributes fatal damage before later daily effects obscure it. `_check_death` saves the cause, day, need levels, disease and recent injury, releases carried equipment, clears social offers and emits a death event. `frontend/src/app.js` renders persistent recent death reports and the detailed life record. Old snapshots retain a legacy attribution label when exact fatal damage was never recorded.
+
+`rules_version=2` migrates old pregnancies proportionally from the previous 270-day rule to the current 90-day rule once. New worlds use the new rule immediately. Run/pause state and world identity are preserved.

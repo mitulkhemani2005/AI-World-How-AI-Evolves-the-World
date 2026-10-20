@@ -142,6 +142,15 @@ The current delivery and the remaining work for these stages are tracked in [imp
 
 ## Family and food ecology revision
 
-Family planning must remain visible among feasible choices after immediate survival needs are met. Agents can approach partners and exchange persistent, expiring proposals instead of requiring identical choices in one decision round. Both adults still independently agree. Physical survival responses can meet urgent needs while the shared model is busy; they never fabricate consent or resources. Pregnancy takes 270 biological days and postpartum recovery takes 120 days. Infants travel with a living caregiver and learn later.
+Family planning must remain visible among feasible choices after immediate survival needs are met. Agents can approach partners and exchange persistent, expiring proposals instead of requiring identical choices in one decision round. Both adults still independently agree. Physical survival responses can meet urgent needs while the shared model is busy; they never fabricate consent or resources. Pregnancy takes 90 biological days and postpartum recovery takes 120 days. Infants travel with a living caregiver and learn later.
 
 Animals are small NPC food sources, secondary to the people. Healthy habitat determines the wildlife budget, capped at 24 wild animals; kept animals use a separate sustainable settlement allowance capped at 24. Natural spawning, reproduction, and migration enforce these budgets.
+
+## Shared survival and exploration revision
+
+- Every death must explain its recorded cause. New fatal damage is attributed immediately, with biological state and damage context retained. Old incomplete records remain labelled as historical attribution.
+- Creating an item or building gives creator credit, while practical use is shared. Families and groups can pool nearby materials. People can disagree, refuse a handover, or fight within a family, within a group, or with outsiders.
+- Building requires a suitable dry site. Farming requires fertile open ground with moisture. Shared shelter capacity, nearby food, crops and existing structures determine practical demand. Repair useful objects before building duplicates.
+- Pregnancy lasts 90 biological days. Existing pregnancies from the old 270-day rule migrate proportionally once, preserving the current world.
+- Agents can discover raft and weapon techniques by experimenting with real materials, teach them, craft shared tools, and learn by using them. Rafts carry up to four people, cross water through explicit sailing, and remain available at a landing. There is no teleportation across oceans.
+- Predators create a natural survival pressure. People can flee, equip weapons and defend themselves or children. Shelter, fire and weapons affect encounters. Predator births and spawning remain bounded by wildlife capacity and a two-predator limit.

@@ -36,7 +36,12 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 - Hover people, animals, resources, crops, buildings, trees, and terrain to inspect them. Animals are small background food NPCs. Wildlife is limited by healthy habitat to at most 24 living wild animals, and kept animals have a separate settlement budget (4 + 2 per living person, capped at 24); no animal totals appear in the interface.
 - Agents can choose terrain care: restore habitat health and soil fertility, clean contaminated resources, and use available water. Hazards and wood gathering damage land; degraded soil affects crops.
 - Running worlds resume across backend restarts and retry recoverable errors. Reset preserves the current run/pause choice. New founders start on adjacent land, with reproduction still requiring independent mutual consent.
-- Family planning gets attention once immediate survival needs are met. A model-selected bond or child proposal remains answerable for seven simulated days; the other person must independently accept. Agents can approach a nearby partner. Gestation lasts 270 simulated days, with a 120-day recovery period after birth. Labels show pregnancy, and the inspector estimates time until birth. Infants are smaller figures carried by their primary living caregiver.
+- Family planning gets attention once immediate survival needs are met. A model-selected bond or child proposal remains answerable for seven simulated days; the other person must independently accept. Agents can approach a nearby partner. Gestation lasts 90 simulated days, with a 120-day recovery period after birth. Labels show pregnancy, and the inspector estimates time until birth. Infants are smaller figures carried by their primary living caregiver.
+- Death reports show the recorded fatal cause, with hunger, thirst, energy, disease and damage context in the life record. Historical snapshots keep their original attribution instead of inventing an exact cause.
+- Buildings and crafted objects are shared. Nearby families and groups pool actual materials. Public farms, campfires, granaries and shelters can be used by anyone; equipped tools can be handed over. Family, internal-group and external fights remain possible and are recorded distinctly.
+- Construction needs stable dry land; farms need open, moist, fertile soil. Agents walk to suitable sites, consider existing shelter capacity and practical local needs, and repair damaged objects. Duplicate buildings or unneeded items are rejected before materials are spent.
+- Agents can experiment to discover weapon making and raft building, craft spears, stone axes and four-person rafts, equip protection, board, sail across the globe and disembark on other land. Items use materials, wear out, and can be repaired. New techniques can be taught.
+- Wolves and big cats are predator species. Their NPC encounters can injure or kill people; weapons, nearby caregivers, shelters and campfires can repel attacks. Predators remain inside the small animal budget, with at most two predators.
 - Inspect the world API and its retained event records for debugging and provenance.
 
 ## Technology
@@ -114,6 +119,8 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 - `frontend/src/surface-motion.js` handles surface travel without unsupported vector APIs.
 - `frontend/index.html` is the independent frontend entry page; `frontend/vite.config.js` configures the dev API proxy.
 - `backend/app/simulation/engine.py` is the authoritative world engine.
+- `backend/app/simulation/planning.py` shares demand, construction-site and family material rules between the model menu and resolver.
+- `backend/app/simulation/activities.py` resolves shared crafting, repairs, boating and predator encounters.
 - `backend/app/agent_brain/ollama_client.py` supplies individual observations and structured choices.
 
 ## Boundaries

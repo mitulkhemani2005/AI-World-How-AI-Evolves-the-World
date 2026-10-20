@@ -120,6 +120,9 @@ const resourceGroup = new THREE.Group(); scene.add(resourceGroup);
 const structureGroup = new THREE.Group(); scene.add(structureGroup);
 const animalGroup = new THREE.Group(); scene.add(animalGroup);
 const cropGroup = new THREE.Group(); scene.add(cropGroup);
+const itemGroup = new THREE.Group(); scene.add(itemGroup);
+let deathWorldId = null;
+const reportedDeaths = new Set();
 const worldEffects = new WorldEffects(scene, worldToScene);
 const labels = new Map();
 const peopleMeshes = new Map();
@@ -256,6 +259,14 @@ function drawCompatibilityGlobe() {
     context.fill();
   }
   // Compatibility mode also visualizes interventions without touching the simulation clock.
+  for (const item of world?.items || []) {
+    if (item.holder_agent_id && item.kind !== "raft") continue;
+    const normal = worldToScene(item.x, item.y).normalize();
+    if (normal.dot(cameraDirection) <= 0) continue;
+    const x = centerX + normal.dot(right) * radius, y = centerY - normal.dot(up) * radius;
+    context.fillStyle = "#92714d";
+    context.fillRect(x - 5, y - 3, item.kind === "raft" ? 12 : 3, item.kind === "raft" ? 6 : 10);
+  }
   for (const effect of worldEffects.active.values()) {
     const normal = effect.group.position.clone().normalize();
     if (normal.dot(cameraDirection) <= 0) continue;
@@ -488,6 +499,29 @@ function createCrop(plot) {
   cropGroup.add(group); sceneObjects.set("crop-" + plot.id, group);
 }
 
+function itemShape(item) {
+  const group = new THREE.Group();
+  group.userData.itemId = item.id;
+  const wood = new THREE.MeshStandardMaterial({ color: 0x92714d, roughness: 1 });
+  if (item.kind === "raft") {
+    for (let index = 0; index < 5; index++) {
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.1, 1.6, 7), wood);
+      log.rotation.x = Math.PI / 2; log.position.x = (index - 2) * 0.18; group.add(log);
+    }
+    for (const side of [-1, 1]) {
+      const beam = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.07, 0.09), wood);
+      beam.position.set(0, 0.08, side * 0.5); group.add(beam);
+    }
+  } else {
+    const handle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.95, 6), wood);
+    handle.position.y = 0.45; group.add(handle);
+    const tip = new THREE.Mesh(item.kind === "stone_axe" ? new THREE.BoxGeometry(0.25, 0.18, 0.08)
+      : new THREE.ConeGeometry(0.065, 0.22, 5), new THREE.MeshStandardMaterial({ color: 0x727a79, roughness: 1 }));
+    tip.position.y = 0.94; group.add(tip);
+  }
+  return group;
+}
+
 function createResource(node) {
   const group = new THREE.Group();
   group.userData.resource = { kind: node.kind, x: node.x, y: node.y };
@@ -656,11 +690,11 @@ function syncObjects(nextWorld) {
   if (currentWorldId !== nextWorld.id) {
     currentWorldId = nextWorld.id; selectedAgentId = null;
     for (const label of labels.values()) label.remove();
-    for (const group of [peopleGroup, resourceGroup, structureGroup, animalGroup, cropGroup]) {
+    for (const group of [peopleGroup, resourceGroup, structureGroup, animalGroup, cropGroup, itemGroup]) {
       for (const child of [...group.children]) disposeSceneObject(child);
     }
     labels.clear(); peopleMeshes.clear(); sceneObjects.clear();
-    peopleGroup.clear(); resourceGroup.clear(); structureGroup.clear(); animalGroup.clear(); cropGroup.clear();
+    peopleGroup.clear(); resourceGroup.clear(); structureGroup.clear(); animalGroup.clear(); cropGroup.clear(); itemGroup.clear();
     seedScenery();
     focusPopulation(nextWorld);
   }
@@ -684,6 +718,17 @@ function syncObjects(nextWorld) {
     figure.userData.buried = agent.buried;
     const lifeScale = agent.age_days < 3 * 365 ? 0.35 : agent.age_days < 12 * 365 ? 0.65 : 1;
     figure.scale.setScalar(1.35 * lifeScale);
+    const held = (nextWorld.items || []).find((item) => item.id === agent.equipped_item_id && item.durability > 0);
+    if (figure.userData.equipmentId !== held?.id) {
+      if (figure.userData.equipmentVisual) disposeSceneObject(figure.userData.equipmentVisual);
+      figure.userData.equipmentVisual = null;
+      figure.userData.equipmentId = held?.id;
+      if (held) {
+        const visual = itemShape(held);
+        visual.position.set(0.25, 0.3, 0.12); visual.rotation.z = -0.18;
+        figure.add(visual); figure.userData.equipmentVisual = visual;
+      }
+    }
     figure.visible = !agent.buried;
     if (!agent.alive && !figure.userData.deathPoseApplied) {
       // Dead bodies remain visible on the surface until someone chooses to bury them.
@@ -739,6 +784,17 @@ function syncObjects(nextWorld) {
     animalFigure.userData.owner = animal.owner_agent_id;
   }
   const desiredCrops = new Set();
+  const desiredItems = new Set();
+  for (const item of nextWorld.items || []) {
+    if (item.kind !== "raft" && item.holder_agent_id) continue;
+    const key = `item-${item.id}`; desiredItems.add(key);
+    let visual = sceneObjects.get(key);
+    if (!visual) { visual = itemShape(item); orientOnGlobe(visual, item.x, item.y, 0.12); itemGroup.add(visual); sceneObjects.set(key, visual); }
+    const destination = worldToScene(item.x, item.y, 0.12);
+    if (!visual.userData.destination || visual.userData.destination.distanceTo(destination) > 0.01) {
+      visual.userData.travelStart = visual.position.clone(); visual.userData.travelStartedAt = performance.now(); visual.userData.destination = destination;
+    }
+  }
   for (const plot of nextWorld.crops || []) {
     const key = "crop-" + plot.id; desiredCrops.add(key);
     if (!sceneObjects.has(key)) createCrop(plot);
@@ -747,7 +803,8 @@ function syncObjects(nextWorld) {
     if ((key.startsWith("resource-") && !desiredResources.has(key))
       || (key.startsWith("structure-") && !desiredStructures.has(key))
       || (key.startsWith("animal-") && !desiredAnimals.has(key))
-      || (key.startsWith("crop-") && !desiredCrops.has(key))) {
+      || (key.startsWith("crop-") && !desiredCrops.has(key))
+      || (key.startsWith("item-") && !desiredItems.has(key))) {
       disposeSceneObject(object); sceneObjects.delete(key);
     }
   }
@@ -815,7 +872,7 @@ function renderFrame(now) {
     figure.userData.selectionRing.rotation.z = now * 0.00045;
   }
   for (const [key, animal] of sceneObjects) {
-    if (!key.startsWith("animal-") || !animal.userData.destination) continue;
+    if ((!key.startsWith("animal-") && !key.startsWith("item-")) || !animal.userData.destination) continue;
     const start = animal.userData.travelStart || animal.userData.destination;
     const progress = THREE.MathUtils.clamp((now - (animal.userData.travelStartedAt ?? now)) / 1300, 0, 1);
     const eased = progress * progress * (3 - 2 * progress);
@@ -898,6 +955,7 @@ function renderInspector() {
   const explanation = document.createElement("div");
   explanation.className = "action-explanation";
   explanation.textContent = [agent.last_action?.reason, agent.last_result,
+    !agent.alive && agent.death_details ? `Death report: ${agent.death_cause || "unrecorded cause"}. Hunger ${Math.round(agent.death_details.hunger ?? agent.hunger)}, thirst ${Math.round(agent.death_details.thirst ?? agent.thirst)}, energy ${Math.round(agent.death_details.energy ?? agent.energy)}. ${agent.death_details.disease || ""} ${agent.death_details.attribution || ""}` : "",
     agent.family_offer && agent.family_offer_until_tick >= world.tick ? `Family proposal: ${agent.family_offer.action} · waiting for an answer` : "",
     agent.pregnancy_days_remaining != null ? `Birth in about ${Math.ceil(agent.pregnancy_days_remaining * (world.day_length_seconds || 60) / (world.time_scale || 1) / 60)} real minutes at current speed` : "",
     agent.construction_project ? `Project: ${agent.construction_project.replaceAll("_", " ")}` : "",
@@ -935,7 +993,23 @@ function renderWorld(next) {
   if (document.activeElement !== $("#speed-select")) $("#speed-select").value = world.auto_accelerate ? "auto" : String(world.time_scale || 2);
   ui.run.textContent = world.running ? "Ⅱ" : "▶";
   ui.run.title = world.running ? "Pause the simulation" : "Run the simulation";
-  syncObjects(world); renderInspector(); renderCulture();
+  syncObjects(world); renderInspector(); renderCulture(); renderDeathReports();
+}
+
+function renderDeathReports() {
+  const changed = deathWorldId !== world.id;
+  if (changed) { deathWorldId = world.id; reportedDeaths.clear(); }
+  const deceased = world.agents.filter((person) => !person.alive);
+  for (const person of deceased) {
+    if (!changed && !reportedDeaths.has(person.id)) notify(`${person.name} died from ${person.death_cause || "an unrecorded cause"}.`, true);
+    reportedDeaths.add(person.id);
+  }
+  const panel = $("#death-notices");
+  panel.hidden = deceased.length === 0;
+  panel.innerHTML = deceased.slice(-3).reverse().map((person) => `<button class="death-report" data-person="${escapeHtml(person.id)}"><b>${escapeHtml(person.name)} died</b><span>${escapeHtml(person.death_cause || "Cause was not recorded")}</span><small>${person.death_tick == null ? "Historical record" : `Day ${person.death_tick + 1}`} · click for their life record</small></button>`).join("");
+  for (const button of document.querySelectorAll(".death-report")) button.addEventListener("click", () => {
+    selectedAgentId = button.dataset.person; renderInspector(); focusPopulation(world);
+  });
 }
 
 async function refreshWorld() {
@@ -1020,7 +1094,7 @@ function inspectPointer(event) {
   if (!world) { tooltip.hidden = true; return null; }
   castPointer(event);
   const hit = fallbackContext ? compatibilityHit(event)
-    : raycaster.intersectObjects([peopleGroup, animalGroup, resourceGroup, structureGroup, cropGroup, terrainMesh], true)[0];
+    : raycaster.intersectObjects([peopleGroup, animalGroup, resourceGroup, structureGroup, cropGroup, itemGroup, terrainMesh], true)[0];
   const description = describeWorldHit(hit, world, sceneToWorld);
   if (!description) { tooltip.hidden = true; return null; }
   tooltip.innerHTML = `<strong>${escapeHtml(description.title)}</strong>${description.lines.filter(Boolean).map((line) => `<span>${escapeHtml(line)}</span>`).join("")}`;
@@ -1043,7 +1117,9 @@ function compatibilityHit(event, landOnly = false) {
     const entries = [...(world?.agents || []).filter((agent) => !agent.buried).map((agent) => ({
       x: agent.x, y: agent.y, object: peopleMeshes.get(agent.id) })),
     ...(world?.animals || []).filter((animal) => animal.alive).map((animal) => ({
-      x: animal.x, y: animal.y, object: sceneObjects.get(`animal-${animal.id}`) }))];
+      x: animal.x, y: animal.y, object: sceneObjects.get(`animal-${animal.id}`) })),
+    ...(world?.items || []).filter((item) => item.kind === "raft" || !item.holder_agent_id).map((item) => ({
+      x: item.x, y: item.y, object: sceneObjects.get(`item-${item.id}`) }))];
     for (const item of entries.reverse()) {
       const point = worldToScene(item.x, item.y), normal = point.clone().normalize();
       if (normal.dot(direction) <= 0 || !item.object) continue;

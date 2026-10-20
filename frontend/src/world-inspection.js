@@ -7,16 +7,23 @@ export function describeWorldHit(hit, world, locateCell) {
     if (data.agentId) {
       const agent = world.agents.find((item) => item.id === data.agentId);
       if (!agent) return null;
-      return { title: agent.name, lines: [agent.alive ? `${Math.floor(agent.age_days / 365)} years · ${agent.sex}` : "Deceased",
+      return { title: agent.name, lines: [agent.alive ? `${Math.floor(agent.age_days / 365)} years · ${agent.sex}` : `Died from ${agent.death_cause || "an unrecorded cause"}`,
         `Health ${Math.round(agent.health)} · Hunger ${Math.round(agent.hunger)} · Thirst ${Math.round(agent.thirst)}`,
         `Action: ${(agent.last_action?.action || "observing").replaceAll("_", " ")}`, agent.last_result || "Click to inspect this person."] };
     }
     if (data.animalId) {
       const animal = world.animals?.find((item) => item.id === data.animalId);
       if (!animal) return null;
-      return { title: animal.species, lines: [`${animal.animal_type} · NPC`,
+      return { title: animal.species.replaceAll("_", " "), lines: [`${animal.animal_type} · NPC${["wolf", "big_cat"].includes(animal.species) ? " · predator" : ""}`,
         `Health ${Math.round(animal.health)} · Hunger ${Math.round(animal.hunger)} · Thirst ${Math.round(animal.thirst)}`,
         animal.disease || "Healthy", animal.owner_agent_id ? `Cared for by ${world.agents.find((item) => item.id === animal.owner_agent_id)?.name || "an agent"}` : "Lives in the wild"] };
+    }
+    if (data.itemId) {
+      const item = world.items?.find((item) => item.id === data.itemId);
+      if (!item) return null;
+      return { title: item.kind.replaceAll("_", " "), lines: [`Durability ${Math.round(item.durability)}% · shared use`,
+        `Made by ${world.agents.find((agent) => agent.id === item.creator_agent_id)?.name || "an agent"}`,
+        item.kind === "raft" ? `Space for ${item.capacity} people` : "Can be carried for defence or hunting"] };
     }
     if (data.resource) {
       const node = world.resources.find((item) => item.kind === data.resource.kind && item.x === data.resource.x && item.y === data.resource.y);
@@ -27,7 +34,7 @@ export function describeWorldHit(hit, world, locateCell) {
       const building = world.structures.find((item) => item.id === data.structureId);
       if (!building) return null;
       return { title: building.kind.replaceAll("_", " "), lines: [`Condition ${Math.round(building.condition ?? 100)}%`,
-        `Owner: ${world.agents.find((item) => item.id === building.owner_agent_id)?.name || "Shared"}`] };
+        `Built by ${world.agents.find((item) => item.id === building.owner_agent_id)?.name || "an agent"} · anyone may use it`] };
     }
     if (data.cropId) {
       const crop = world.crops?.find((item) => item.id === data.cropId);

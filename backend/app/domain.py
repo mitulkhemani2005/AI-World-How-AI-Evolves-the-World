@@ -49,6 +49,10 @@ class EventKind(str, Enum):
     BURIAL = "burial"
     TERRAIN_CARE = "terrain_care"
     ANIMAL_SPAWNED = "animal_spawned"
+    CRAFTING = "crafting"
+    ITEM_USED = "item_used"
+    PREDATOR_ATTACK = "predator_attack"
+    EXPLORATION = "exploration"
 
 
 ActionName = Literal[
@@ -78,6 +82,7 @@ ActionName = Literal[
     "join_group",
     "create_belief",
     "tend_terrain",
+    "craft", "use_item", "drop_item", "repair", "experiment", "board", "sail", "disembark", "defend", "flee", "explore",
 ]
 
 
@@ -90,6 +95,11 @@ class AgentAction(BaseModel):
     target_agent_id: str | None = None
     target_group_id: str | None = None
     target_animal_id: str | None = None
+    target_item_id: str | None = None
+    target_structure_id: str | None = None
+    item_kind: Literal["spear", "stone_axe", "raft"] | None = None
+    destination_x: int | None = Field(default=None, ge=0)
+    destination_y: int | None = Field(default=None, ge=0)
     message: str = Field(default="", max_length=240)
     structure_type: str | None = None
     resource_kind: Literal["wood", "stone"] | None = None
@@ -150,6 +160,7 @@ class Animal(BaseModel):
     last_care_tick: int = -1
     death_tick: int | None = None
     last_birth_tick: int = -10000
+    last_attack_tick: int = -1
 
 
 class CropPlot(BaseModel):
@@ -183,6 +194,9 @@ class Agent(BaseModel):
     # A dead body remains in the scene until another agent chooses to bury it.
     buried: bool = False
     death_cause: str | None = None
+    death_tick: int | None = None
+    death_details: dict[str, object] = Field(default_factory=dict)
+    last_injury: dict[str, object] = Field(default_factory=dict)
     disease: str | None = None
     disease_days: int = 0
     immune_to: list[str] = Field(default_factory=list)
@@ -212,6 +226,10 @@ class Agent(BaseModel):
     decisions_made: int = 0
     last_rest_recovery_tick: int = -1
     last_care_tick: int = -1
+    crafting_project: str | None = None
+    equipped_item_id: str | None = None
+    vehicle_id: str | None = None
+    has_sailed: bool = False
 
     @property
     def age_years(self) -> float:
@@ -240,6 +258,20 @@ class SocialGroup(BaseModel):
     leader_agent_id: str
     member_ids: list[str] = Field(default_factory=list)
     formed_at_tick: int
+
+
+class CraftedItem(BaseModel):
+    """A physical shared object; creator credit does not restrict who can use it."""
+
+    id: str
+    kind: Literal["spear", "stone_axe", "raft"]
+    x: int
+    y: int
+    creator_agent_id: str
+    holder_agent_id: str | None = None
+    durability: float = Field(default=100, ge=0, le=100)
+    created_tick: int
+    capacity: int = 1
 
 
 class CulturalBelief(BaseModel):
@@ -286,6 +318,8 @@ class WorldState(BaseModel):
     animals: list[Animal] = Field(default_factory=list)
     crops: list[CropPlot] = Field(default_factory=list)
     structures: list[Structure] = Field(default_factory=list)
+    items: list[CraftedItem] = Field(default_factory=list)
+    rules_version: int = 1
     groups: list[SocialGroup] = Field(default_factory=list)
     beliefs: list[CulturalBelief] = Field(default_factory=list)
     tech_level: int = 0
