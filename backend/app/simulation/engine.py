@@ -61,8 +61,8 @@ class SimulationEngine:
             # Continue older databases from their world seed; future saves persist the full stream.
             self._random.seed(self.state.seed)
         # Older snapshots may contain per-person model choices; migrate them to one shared brain.
-        if not self.state.global_model or self.state.global_model == "gemma4:e2b":
-            self.state.global_model = settings.ollama_model
+        # Always migrate legacy snapshots to the one supported shared model.
+        self.state.global_model = settings.ollama_model
         for person in self.state.agents:
             person.model = self.state.global_model
             person.x = min(max(person.x, 0), self.state.width - 1)
@@ -407,7 +407,10 @@ class SimulationEngine:
                     proposals[agent_id] = self._fallback_action(person, observation_state)
                     fallback_errors[agent_id] = str(result)[:240]
                 else:
-                    proposals[agent_id] = result
+                    person = next(person for person in decision_agents if person.id == agent_id)
+                    # Keep LLM personalities, while protecting survival and making shelter work begin reliably.
+                    priority = self._priority_task(person, observation_state)
+                    proposals[agent_id] = priority or result
 
             async with self._lock:
                 world = self.state
@@ -470,8 +473,8 @@ class SimulationEngine:
     async def change_global_model(self, model: str) -> WorldState:
         async with self._lock:
             model = model.strip()
-            if not model:
-                raise ValueError("Model name cannot be empty")
+            if model != settings.ollama_model:
+                raise ValueError(f"Only {settings.ollama_model} is supported for this world")
             old_model = self.state.global_model
             self.state.global_model = model
             for agent in self.state.agents:
@@ -1237,8 +1240,10 @@ class SimulationEngine:
             and world.tick % 14 == 0
         ):
             return AgentAction(action="reproduce", target_agent_id=partner.id, reason="Choose to have a child")
-        # Once immediate needs are met, fallback agents slowly invest in shared shelter.
-        if self._adult(agent) and world.tick % 11 == 0 and len(world.structures) < 8:
+        # Once immediate needs are met, agents keep gathering/building until each household has cover.
+        shelter_target = max(1, math.ceil(sum(person.alive for person in world.agents) / 2))
+        shelter_count = sum(structure.kind in SHELTER_KINDS for structure in world.structures)
+        if self._adult(agent) and shelter_count < shelter_target:
             preferred = "lean_to" if world.tech_level == 0 else "hut" if world.tech_level == 1 else "communal_house"
             required_level, cost = BUILDING_RULES[preferred]
             missing = [resource for resource, amount in cost.items() if agent.inventory.get(resource, 0) < amount]
@@ -1253,6 +1258,53 @@ class SimulationEngine:
         if self._random.random() < 0.08:
             return AgentAction(action="communicate", target_agent_id=next((a.id for a in world.agents if a.alive and a.id != agent.id and self._distance(agent, a) <= 3), None), message="Food and water matter for our survival.", reason="Share a survival idea")
         return AgentAction(action="rest", reason="No immediate need")
+
+    def _priority_task(self, agent: Agent, world: WorldState) -> AgentAction | None:
+        """Enforce urgent biological needs and give an unsheltered population a concrete work goal."""
+        if agent.thirst >= 65:
+            water = self._nearest_resource(world, "water", agent)
+            if water:
+                return self._move_or_act(world, agent, water, "drink", "Urgent need for clean water")
+        if agent.hunger >= 65:
+            food = self._nearest_food(world, agent)
+            if food:
+                return self._move_or_act(world, agent, food, "forage", "Urgent need for food")
+        if agent.health < 35 or agent.energy < 12:
+            return AgentAction(action="rest", reason="Recover from poor health or exhaustion")
+        child_needing_care = next(
+            (child for child in world.agents if child.alive and child.age_days < 3 * 365
+             and self._distance(agent, child) <= 1
+             and (child.hunger > 55 or child.thirst > 55 or child.health < 60)),
+            None,
+        )
+        if child_needing_care:
+            return AgentAction(action="help", target_agent_id=child_needing_care.id,
+                               reason="Care for a nearby child")
+        bereaved_relative = next(
+            (person for person in world.agents if not person.alive and not person.buried
+             and self._is_related(agent, person) and self._distance(agent, person) <= 3),
+            None,
+        )
+        if bereaved_relative:
+            if self._distance(agent, bereaved_relative) > 1:
+                return self._move_or_act(world, agent, bereaved_relative, "mourn",
+                                         f"Approach relative {bereaved_relative.name}")
+            return AgentAction(action="mourn", target_agent_id=bereaved_relative.id,
+                               reason="Mourn a deceased family member")
+
+        shelter_target = max(1, math.ceil(sum(person.alive for person in world.agents) / 2))
+        shelter_count = sum(structure.kind in SHELTER_KINDS for structure in world.structures)
+        if self._adult(agent) and shelter_count < shelter_target:
+            preferred = "lean_to" if world.tech_level == 0 else "hut" if world.tech_level == 1 else "communal_house"
+            required_level, cost = BUILDING_RULES[preferred]
+            missing = [name for name, amount in cost.items() if agent.inventory.get(name, 0) < amount]
+            if not missing and world.tech_level >= required_level:
+                return AgentAction(action="build", structure_type=preferred, reason="Build the population's first shelter")
+            resource_kind = next(iter(missing), "wood")
+            resource = self._nearest_resource(world, resource_kind, agent)
+            if resource:
+                return self._move_or_act(world, agent, resource, "gather", "Gather materials for a needed shelter", resource_kind)
+        return None
 
     def _prepare_resource_action(self, world: WorldState, agent: Agent, action: AgentAction) -> AgentAction:
         """Turn a resource choice into one sensible step when its target is farther away."""

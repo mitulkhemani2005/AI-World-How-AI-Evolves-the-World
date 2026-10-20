@@ -31,14 +31,14 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 - Select one installed Ollama model for the whole world. Each agent still has an independent identity and private history.
 - Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
 - Run, pause, advance one day, or reset the world. During a run, agents receive a decision opportunity every 2.5 seconds while a complete day and night takes 60 seconds. Age, needs, seasons, disease progression, and ecology advance at day boundaries. The minimalist spectator does not use a name roster or a visible timeline.
-- Watch the globe's sunlight and the visible clock move through day and night. Every action appears above its agent. Dead people remain visible on the ground until a nearby agent chooses to mourn or bury them.
+- Watch the globe's sunlight follow your computer's local clock. The world still advances one biological day per 60 seconds of real elapsed time, with agents making multiple decisions during each day. Every action appears above its agent. Dead people remain visible on the ground until a nearby agent chooses to mourn or bury them.
 - Inspect the world API and its retained event records for debugging and provenance.
 
 ## Technology
 
 - **Frontend:** Vite, Three.js, native HTML/CSS/JavaScript. It is a separate application, not rendered by FastAPI.
 - **Backend:** Python, FastAPI, Pydantic, HTTPX.
-- **Decision model:** Ollama, default model `qwen2.5:0.5b` (about 500 million parameters), shared across agents. `gemma4:e2b` remains available if installed.
+- **Decision model:** Ollama `qwen2.5:0.5b`, shared across all agents. The model is pinned so all people use the same small Qwen model.
 - **Persistence:** SQLite world snapshots.
 
 ## Local setup

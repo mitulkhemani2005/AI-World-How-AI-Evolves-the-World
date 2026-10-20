@@ -31,9 +31,10 @@ async def health() -> dict[str, object]:
 
 @router.get("/models")
 async def available_models() -> dict[str, object]:
-    """Return installed local models for the shared world brain selector."""
+    """Expose only the model supported by this simulation."""
     models = await OllamaClient().installed_models()
-    return {"available": models is not None, "models": models or []}
+    model = settings.ollama_model
+    return {"available": models is not None, "models": [model] if models and model in models else [model]}
 
 
 @router.get("/world", response_model=WorldState)
@@ -65,6 +66,8 @@ async def reset_world(seed: int = 7) -> WorldState:
 async def change_world_model(request: ModelChange) -> WorldState:
     """Set the same Ollama model for every current and future agent."""
     try:
+        if request.model != settings.ollama_model:
+            raise ValueError(f"Only {settings.ollama_model} is supported for this world")
         models = await OllamaClient().installed_models()
         if models is not None and request.model not in models:
             raise ValueError(f"Model '{request.model}' is not installed in Ollama")

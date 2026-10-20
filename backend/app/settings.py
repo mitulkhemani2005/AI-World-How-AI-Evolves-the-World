@@ -9,8 +9,8 @@ class Settings:
 
     app_name = "AI World API"
     ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    # A sub-1B instruction model keeps local action decisions quick on modest hardware.
-    ollama_model = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
+    # The simulation intentionally pins one shared, small Qwen brain for every person.
+    ollama_model = "qwen2.5:0.5b"
     ollama_timeout_seconds = float(os.getenv("OLLAMA_TIMEOUT_SECONDS", "20"))
     decision_interval_seconds = float(os.getenv("DECISION_INTERVAL_SECONDS", "2.5"))
     day_length_seconds = float(os.getenv("DAY_LENGTH_SECONDS", "60"))

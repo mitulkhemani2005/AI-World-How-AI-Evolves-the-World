@@ -61,7 +61,7 @@ controls.minDistance = 11;
 controls.maxDistance = 40;
 controls.maxPolarAngle = Math.PI;
 
-const skyLight = new THREE.HemisphereLight(0xf4f7ff, 0x556255, 1.25);
+const skyLight = new THREE.HemisphereLight(0xf4f7ff, 0x66705e, 1.55);
 scene.add(skyLight);
 const sunlight = new THREE.DirectionalLight(0xffe3bf, 2.5);
 sunlight.position.set(-11, 20, 8);
@@ -405,7 +405,11 @@ function syncObjects(nextWorld) {
       orientOnGlobe(figure, agent.x, agent.y, 0.28);
     }
     const destination = worldToScene(agent.x, agent.y, 0.28);
-    figure.userData.destination = destination;
+    if (!figure.userData.destination || figure.userData.destination.distanceTo(destination) > 0.04) {
+      figure.userData.travelStart = figure.position.clone();
+      figure.userData.travelStartedAt = performance.now();
+      figure.userData.destination = destination;
+    }
     figure.userData.moving = agent.last_action?.action === "move" && agent.alive;
     figure.userData.working = agent.alive && !["move", "rest", "drink", "bond", "reproduce"].includes(agent.last_action?.action);
     figure.userData.dead = !agent.alive;
@@ -453,7 +457,12 @@ function syncObjects(nextWorld) {
     const key = "animal-" + animal.id; desiredAnimals.add(key);
     let animalFigure = sceneObjects.get(key);
     if (!animalFigure) animalFigure = makeAnimal(animal);
-    animalFigure.userData.destination = worldToScene(animal.x, animal.y, 0.02);
+    const animalDestination = worldToScene(animal.x, animal.y, 0.02);
+    if (!animalFigure.userData.destination || animalFigure.userData.destination.distanceTo(animalDestination) > 0.04) {
+      animalFigure.userData.travelStart = animalFigure.position.clone();
+      animalFigure.userData.travelStartedAt = performance.now();
+      animalFigure.userData.destination = animalDestination;
+    }
     animalFigure.userData.animalType = animal.animal_type;
     animalFigure.userData.owner = animal.owner_agent_id;
   }
@@ -491,11 +500,14 @@ function frame(now) {
   for (const figure of peopleMeshes.values()) {
     const destination = figure.userData.destination;
     if (!destination) continue;
-    const blend = 1 - Math.exp(-3.2 / 60);
-    const nextPosition = figure.position.clone().lerp(destination, blend).normalize();
-    const nextRadius = THREE.MathUtils.damp(figure.position.length(), destination.length(), 3.2, 1 / 60);
-    figure.position.copy(nextPosition.multiplyScalar(nextRadius));
-    if (!figure.userData.dead) figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), blend);
+    // Smoothstep along the globe surface keeps each person grounded during travel.
+    const start = figure.userData.travelStart || destination;
+    const rawProgress = THREE.MathUtils.clamp((now - (figure.userData.travelStartedAt || now)) / 1050, 0, 1);
+    const progress = rawProgress * rawProgress * (3 - 2 * rawProgress);
+    const direction = start.clone().normalize().slerp(destination.clone().normalize(), progress).normalize();
+    const radius = THREE.MathUtils.lerp(start.length(), destination.length(), progress) + Math.sin(progress * Math.PI) * 0.08;
+    figure.position.copy(direction.multiplyScalar(radius));
+    if (!figure.userData.dead) figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), 0.16);
     const moving = !figure.userData.dead && figure.userData.moving && figure.position.distanceTo(destination) > 0.13;
     const working = !figure.userData.dead && figure.userData.working;
     figure.userData.limbs.forEach((limb, index) => {
@@ -509,9 +521,12 @@ function frame(now) {
   }
   for (const [key, animal] of sceneObjects) {
     if (!key.startsWith("animal-") || !animal.userData.destination) continue;
-    const alpha = 1 - Math.exp(-2.2 / 60);
-    animal.position.lerp(animal.userData.destination, alpha).normalize().multiplyScalar(globeRadius + 0.3);
-    animal.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), animal.position.clone().normalize()), alpha);
+    const start = animal.userData.travelStart || animal.userData.destination;
+    const progress = THREE.MathUtils.clamp((now - (animal.userData.travelStartedAt || now)) / 1300, 0, 1);
+    const eased = progress * progress * (3 - 2 * progress);
+    const direction = start.clone().normalize().slerp(animal.userData.destination.clone().normalize(), eased).normalize();
+    animal.position.copy(direction.multiplyScalar(THREE.MathUtils.lerp(start.length(), animal.userData.destination.length(), eased)));
+    animal.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), animal.position.clone().normalize()), 0.12);
   }
   updateDaylight();
   renderLabels();
@@ -520,14 +535,15 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 function updateDaylight() {
-  // One minute of real time maps to one full 24-hour day and night cycle.
-  const hour = (6 + ((world?.day_progress_seconds || 0) / (world?.day_length_seconds || 60)) * 24) % 24;
-  const sunHeight = Math.sin(((hour - 6) / 12) * Math.PI);
-  const daylight = THREE.MathUtils.clamp(sunHeight, 0, 1);
-  sunlight.intensity = 0.18 + daylight * 2.15;
-  skyLight.intensity = 0.55 + daylight * 1.0;
+  // Light follows the spectator's actual local clock, not the simulation's accelerated day.
+  const current = new Date();
+  const hour = current.getHours() + current.getMinutes() / 60 + current.getSeconds() / 3600;
+  const daylight = THREE.MathUtils.clamp((Math.sin(((hour - 6) / 12) * Math.PI) + 0.15) / 1.15, 0, 1);
+  // Keep the terrain legible at night instead of rendering it nearly black.
+  sunlight.intensity = 0.78 + daylight * 1.45;
+  skyLight.intensity = 1.0 + daylight * 0.75;
   const angle = ((hour - 6) / 24) * Math.PI * 2;
-  sunlight.position.set(Math.cos(angle) * 18, Math.max(-4, sunHeight * 20), Math.sin(angle) * 18);
+  sunlight.position.set(Math.cos(angle) * 18, Math.max(1, Math.sin(((hour - 6) / 12) * Math.PI) * 20), Math.sin(angle) * 18);
 }
 
 function statBar(name, value, lowIsBad = false) {
@@ -583,10 +599,8 @@ function renderWorld(next) {
   const year = Math.floor(world.tick / 365) + 1; const day = (world.tick % 365) + 1;
   const living = world.agents.filter((agent) => agent.alive).length;
   const animalCount = (world.animals || []).filter((animal) => animal.alive).length;
-  const elapsedHours = (6 + ((world.day_progress_seconds || 0) / (world.day_length_seconds || 60)) * 24) % 24;
-  const hour = Math.floor(elapsedHours);
-  const minute = Math.floor((elapsedHours % 1) * 60);
-  ui.clock.textContent = `YEAR ${year} · DAY ${day} · ${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}${world.processing ? " · THINKING" : ""}`;
+  const localTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · DAY ${day}${world.processing ? " · THINKING" : ""}`;
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
