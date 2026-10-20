@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { interpolateSurfacePosition } from "./surface-motion.js";
 import "./styles.css";
 
 // The frontend is a spectator only; FastAPI remains the source of world state and rules.
@@ -7,8 +8,8 @@ const $ = (selector) => document.querySelector(selector);
 const host = $("#world-scene");
 const apiBase = import.meta.env.VITE_API_BASE_URL || "";
 const ui = { clock: $("#clock-label"), model: $("#model-select"), run: $("#run-button"), step: $("#step-button"), inspector: $("#agent-inspector"), toast: $("#toast") };
-const worldWidth = 36;
-const worldHeight = 18;
+let worldWidth = 36;
+let worldHeight = 18;
 const globeRadius = 10;
 let world = null;
 let selectedAgentId = null;
@@ -16,13 +17,14 @@ let currentWorldId = null;
 let isStepping = false;
 let draggedEvent = null;
 let toastTimeout = null;
+let followingAgentId = null;
 
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[character]);
 }
 
 async function api(path, options = {}) {
-  const response = await fetch(`${apiBase}${path}`, { headers: { "Content-Type": "application/json" }, ...options });
+  const response = await fetch(`${apiBase}${path}`, { cache: "no-store", signal: AbortSignal.timeout(30000), headers: { "Content-Type": "application/json" }, ...options });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(body.detail || `Request failed (${response.status})`);
   return body;
@@ -87,7 +89,7 @@ controls.enableDamping = true;
 controls.dampingFactor = 0.075;
 controls.enableZoom = true;
 controls.zoomSpeed = 0.8;
-controls.enablePan = true;
+controls.enablePan = false;
 controls.panSpeed = 0.45;
 controls.minDistance = 11;
 controls.maxDistance = 40;
@@ -168,7 +170,7 @@ function drawCompatibilityGlobe() {
   const height = host.clientHeight;
   const centerX = width / 2;
   const centerY = height / 2;
-  const radius = Math.max(40, Math.min(width * 0.32, height * 0.39));
+  const radius = Math.max(40, Math.min(width * 0.45, height * 0.39) * (29 / camera.position.length()));
   context.clearRect(0, 0, width, height);
   context.fillStyle = "#f4f5f1";
   context.fillRect(0, 0, width, height);
@@ -262,6 +264,8 @@ function createTerrain(nextWorld = null) {
     }
   }
   const geometry = new THREE.SphereGeometry(globeRadius, 192, 128);
+  // Align the texture's longitude zero with worldToScene, not Three.js's default sphere seam.
+  geometry.rotateY(-Math.PI / 2);
   const positions = geometry.attributes.position;
   if (nextWorld?.terrain?.length) {
     terrainCells = new Map(nextWorld.terrain.map((cell) => [cell.x + ":" + cell.y, cell]));
@@ -364,6 +368,7 @@ function makeHumanoid(agent) {
     const arm = new THREE.Mesh(new THREE.CapsuleGeometry(0.047, 0.25, 3, 6), skin);
     arm.position.set(side * 0.19, 0.73, 0);
     arm.userData.swingPhase = side < 0 ? 0 : Math.PI;
+    arm.userData.isArm = true;
     root.add(arm); limbs.push(arm);
     const leg = new THREE.Mesh(new THREE.CapsuleGeometry(0.058, 0.27, 3, 6), darkCloth);
     leg.position.set(side * 0.073, 0.32, 0);
@@ -510,7 +515,44 @@ function resizeScene() {
 new ResizeObserver(resizeScene).observe(host);
 resizeScene();
 
+function showWholeWorld() {
+  followingAgentId = null;
+  controls.target.set(0, 0, 0);
+  controls.minDistance = 12;
+  controls.maxDistance = 55;
+  camera.position.set(0, 7, 28);
+  controls.update();
+}
+
+function focusPopulation(nextWorld = world) {
+  const person = nextWorld?.agents.find((agent) => agent.id === selectedAgentId)
+    || nextWorld?.agents.find((agent) => agent.alive);
+  if (!person || fallbackContext) return showWholeWorld();
+  followingAgentId = person.id;
+  const position = worldToScene(person.x, person.y, 0.5);
+  const normal = position.clone().normalize();
+  // Start near the living settlement so people and their work are large enough to inspect.
+  controls.target.copy(position);
+  controls.minDistance = 3;
+  controls.maxDistance = 40;
+  camera.position.copy(position).addScaledVector(normal, 10).add(new THREE.Vector3(0, 3, 0));
+  controls.update();
+}
+
+function zoomView(factor) {
+  const offset = camera.position.clone().sub(controls.target);
+  const distance = THREE.MathUtils.clamp(offset.length() * factor, controls.minDistance, controls.maxDistance);
+  camera.position.copy(controls.target).add(offset.normalize().multiplyScalar(distance));
+  controls.update();
+}
+$("#view-world").addEventListener("click", showWholeWorld);
+$("#view-people").addEventListener("click", () => focusPopulation());
+$("#zoom-in").addEventListener("click", () => zoomView(0.8));
+$("#zoom-out").addEventListener("click", () => zoomView(1.25));
+
 function syncObjects(nextWorld) {
+  worldWidth = nextWorld.width;
+  worldHeight = nextWorld.height;
   if (terrainWorldId !== nextWorld.id) createTerrain(nextWorld);
   if (currentWorldId !== nextWorld.id) {
     currentWorldId = nextWorld.id; selectedAgentId = null;
@@ -518,6 +560,7 @@ function syncObjects(nextWorld) {
     labels.clear(); peopleMeshes.clear(); sceneObjects.clear();
     peopleGroup.clear(); resourceGroup.clear(); structureGroup.clear(); animalGroup.clear(); cropGroup.clear();
     seedScenery();
+    focusPopulation(nextWorld);
   }
   const liveIds = new Set(nextWorld.agents.map((agent) => agent.id));
   for (const [id, label] of labels) if (!liveIds.has(id)) { label.remove(); labels.delete(id); peopleMeshes.delete(id); }
@@ -557,8 +600,9 @@ function syncObjects(nextWorld) {
     figure.userData.selectionRing.visible = agent.alive && agent.id === selectedAgentId;
     const label = labels.get(agent.id);
     const action = agent.last_action?.action?.replaceAll("_", " ");
+    const intention = agent.pending_action?.action?.replaceAll("_", " ");
     label.textContent = agent.alive
-      ? `${agent.name} · ${action || "observing"}`
+      ? `${agent.name} · ${action || "observing"}${intention && intention !== action ? ` → ${intention}` : ""}`
       : agent.buried ? `${agent.name} · buried` : `${agent.name} · deceased`;
     label.classList.toggle("selected", agent.id === selectedAgentId);
     label.classList.toggle("dead", !agent.alive);
@@ -612,13 +656,21 @@ function renderLabels() {
     const x = (projected.x * 0.5 + 0.5) * host.clientWidth;
     const y = (-projected.y * 0.5 + 0.5) * host.clientHeight;
     label.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
-    const frontFacing = figure.position.dot(camera.position) > 0;
-    label.style.display = !figure.userData.buried && frontFacing && projected.z < 1 && figure.position.clone().sub(camera.position).length() < 55 ? "block" : "none";
+    const frontFacing = figure.position.clone().normalize().dot(camera.position.clone().sub(figure.position)) > 0;
+    label.style.display = !figure.userData.buried && frontFacing && projected.z > -1 && projected.z < 1 && figure.position.clone().sub(camera.position).length() < 55 ? "block" : "none";
   }
 }
 
-function frame(now) {
-  requestAnimationFrame(frame);
+let lastFrameAt = 0;
+function renderFrame(now) {
+  const delta = Math.min(0.05, Math.max(0.001, (now - lastFrameAt) / 1000 || 1 / 60));
+  lastFrameAt = now;
+  const followed = peopleMeshes.get(followingAgentId);
+  if (followed) {
+    const shift = followed.position.clone().sub(controls.target).multiplyScalar(1 - Math.exp(-5 * delta));
+    controls.target.add(shift);
+    camera.position.add(shift);
+  }
   controls.update();
   // Labels and picking use the same current camera transform as the rendered frame.
   camera.updateMatrixWorld(true);
@@ -628,35 +680,46 @@ function frame(now) {
     if (!destination) continue;
     // Smoothstep along the globe surface keeps each person grounded during travel.
     const start = figure.userData.travelStart || destination;
-    const rawProgress = THREE.MathUtils.clamp((now - (figure.userData.travelStartedAt || now)) / 1050, 0, 1);
+    const rawProgress = THREE.MathUtils.clamp((now - (figure.userData.travelStartedAt ?? now)) / 1050, 0, 1);
     const progress = rawProgress * rawProgress * (3 - 2 * rawProgress);
-    const direction = start.clone().normalize().slerp(destination.clone().normalize(), progress).normalize();
-    const radius = THREE.MathUtils.lerp(start.length(), destination.length(), progress) + Math.sin(progress * Math.PI) * 0.08;
-    figure.position.copy(direction.multiplyScalar(radius));
-    if (!figure.userData.dead) figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), 0.16);
+    interpolateSurfacePosition(start, destination, progress, 0.08, figure.position);
+    if (!figure.userData.dead) figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), 1 - Math.exp(-10 * delta));
     const moving = !figure.userData.dead && figure.userData.moving && figure.position.distanceTo(destination) > 0.13;
     const working = !figure.userData.dead && figure.userData.working;
-    figure.userData.limbs.forEach((limb, index) => {
-      const armAtWork = working && index < 2;
+    figure.userData.limbs.forEach((limb) => {
+      const armAtWork = working && limb.userData.isArm;
       limb.rotation.x = moving ? Math.sin(now * 0.007 + limb.userData.swingPhase) * 0.48
         : armAtWork ? Math.sin(now * 0.005 + limb.userData.swingPhase) * 0.22
-          : THREE.MathUtils.damp(limb.rotation.x, 0, 5, 1 / 60);
+          : THREE.MathUtils.damp(limb.rotation.x, 0, 5, delta);
     });
-    if (moving) figure.rotation.y += Math.sin(now * 0.001) * 0.002;
     figure.userData.selectionRing.rotation.z = now * 0.00045;
   }
   for (const [key, animal] of sceneObjects) {
     if (!key.startsWith("animal-") || !animal.userData.destination) continue;
     const start = animal.userData.travelStart || animal.userData.destination;
-    const progress = THREE.MathUtils.clamp((now - (animal.userData.travelStartedAt || now)) / 1300, 0, 1);
+    const progress = THREE.MathUtils.clamp((now - (animal.userData.travelStartedAt ?? now)) / 1300, 0, 1);
     const eased = progress * progress * (3 - 2 * progress);
-    const direction = start.clone().normalize().slerp(animal.userData.destination.clone().normalize(), eased).normalize();
-    animal.position.copy(direction.multiplyScalar(THREE.MathUtils.lerp(start.length(), animal.userData.destination.length(), eased)));
-    animal.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), animal.position.clone().normalize()), 0.12);
+    interpolateSurfacePosition(start, animal.userData.destination, eased, 0, animal.position);
+    animal.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), animal.position.clone().normalize()), 1 - Math.exp(-8 * delta));
   }
   updateDaylight();
   renderLabels();
   renderer.render(scene, camera);
+}
+let frameError = null;
+function frame(now) {
+  try {
+    renderFrame(now);
+    frameError = null;
+    if (world) $("#scene-status").hidden = true;
+  } catch (error) {
+    // A visible failure is actionable; a frozen ocean with no error message is not.
+    if (frameError !== error.message) console.error("World frame failed", error);
+    frameError = error.message;
+    $("#scene-status").hidden = false;
+    $("#scene-status").textContent = `World display error: ${error.message}`;
+  }
+  requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
 
@@ -705,6 +768,12 @@ function renderInspector() {
   habitat.className = "habitat-line";
   habitat.textContent = "Habitat · " + (biome?.kind?.replaceAll("_", " ") || "unknown");
   ui.inspector.querySelector(".condition")?.after(habitat);
+  const explanation = document.createElement("div");
+  explanation.className = "action-explanation";
+  explanation.textContent = [agent.last_action?.reason, agent.last_result,
+    agent.construction_project ? `Project: ${agent.construction_project.replaceAll("_", " ")}` : "",
+    agent.decision_source ? `Decision: ${agent.decision_source}${agent.intention_source ? ` (${agent.intention_source} intention)` : ""}` : ""].filter(Boolean).join(" · ");
+  ui.inspector.querySelector(".detail-list")?.after(explanation);
   ui.inspector.querySelector(".close-inspector").addEventListener("click", () => { selectedAgentId = null; renderInspector(); syncObjects(world); });
   ui.inspector.querySelector("#edit-agent").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -743,7 +812,11 @@ function renderWorld(next) {
 
 async function refreshWorld() {
   try { renderWorld(await api("/api/world")); }
-  catch (error) { ui.clock.textContent = "BACKEND UNAVAILABLE"; notify(error.message, true); }
+  catch (error) {
+    ui.clock.textContent = "WORLD CONNECTION ERROR";
+    $("#scene-status").hidden = false;
+    $("#scene-status").textContent = `World connection failed: ${error.message}`;
+  }
 }
 
 async function refreshModels() {
@@ -754,7 +827,8 @@ async function refreshModels() {
     if (!response.models?.includes(selected)) options.unshift(`<option value="${escapeHtml(selected)}">${escapeHtml(selected)} · unavailable</option>`);
     ui.model.innerHTML = options.join("") || `<option value="${escapeHtml(selected)}">${escapeHtml(selected)}</option>`;
     ui.model.value = selected;
-    ui.model.title = health.ollama_available ? "One model guides every agent; their memories remain individual." : "Ollama is unavailable. The world can continue with its survival fallback.";
+    ui.model.disabled = true;
+    ui.model.title = health.model_ready ? "Qwen guides each separate private mind." : "Qwen is unavailable. The world uses a recorded survival fallback.";
   } catch (error) { ui.model.innerHTML = "<option>Ollama unavailable</option>"; ui.model.title = error.message; }
 }
 
@@ -784,6 +858,8 @@ $("#reset-world").addEventListener("click", async () => {
 $("#culture-button").addEventListener("click", () => { const panel = $("#culture-popover"); panel.hidden = !panel.hidden; });
 
 function castPointer(event) {
+  scene.updateMatrixWorld(true);
+  camera.updateMatrixWorld(true);
   const bounds = renderer.domElement.getBoundingClientRect();
   pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
   pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
@@ -794,6 +870,8 @@ function groundHit(event) {
   castPointer(event);
   const hit = raycaster.intersectObject(terrainMesh, false)[0];
   if (!hit) return null;
+  const location = sceneToWorld(hit.point);
+  if (terrainAt(location.x, location.y)?.kind === "ocean") return null;
   return hit.point;
 }
 

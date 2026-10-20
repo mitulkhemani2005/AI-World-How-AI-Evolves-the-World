@@ -44,3 +44,9 @@ body,.app-shell{background:#f4f5f1}
 .source-note{color:#738076}.toast{color:#27322c;background:#fff;box-shadow:0 12px 35px rgba(31,42,33,.14)}
 .toast.error{color:#8f3933}.biome-legend{color:#46534a;background:rgba(255,255,255,.9);box-shadow:0 8px 26px rgba(31,42,33,.08)}
 .habitat-line{color:#63725f}
+.view-controls{position:absolute;z-index:6;left:50%;bottom:55px;transform:translateX(-50%);display:flex;gap:5px;padding:5px;border:1px solid var(--line);border-radius:10px;background:rgba(255,255,255,.95);box-shadow:0 5px 20px #24302312}
+.view-controls button{border:0;border-radius:6px;padding:7px 12px;background:#edf1e8;color:#33472e;cursor:pointer;font:10px var(--mono)}
+.view-controls button:hover{background:#dae5d0}
+.scene-status{position:absolute;z-index:8;top:48%;left:50%;transform:translate(-50%,-50%);max-width:460px;padding:16px 20px;border:1px solid #c3cdbd;border-radius:10px;background:#fff;color:#45523e;font-size:13px;box-shadow:0 10px 40px #15291422}
+.scene-status[hidden]{display:none}
+.action-explanation{margin-top:12px;padding:10px;border-radius:6px;background:#eef2e9;color:#40503a;font-size:11px;line-height:1.5}

@@ -18,9 +18,9 @@ The starting date is an approximate thematic choice. The simulation is not a sci
 
 ### Shared model, separate minds
 
-All agents use one world-wide LLM model selected by the spectator. Each agent still has an independent mind: private observations, memories, experiences, traits, relationships, and life history are sent separately to that shared model for each decision. Sharing an LLM does not mean sharing a conversation or a collective brain. A model change applies to every current agent and every newborn while leaving each individual's identity and history intact.
+All agents use one world-wide LLM model. The current implementation follows the latest project choice: only `qwen2.5:0.5b` is enabled. Each agent still has an independent mind: private observations, memories, experiences, traits, relationships, and life history are sent separately to that shared model for each decision. Sharing an LLM does not mean sharing a conversation or a collective brain. General model switching remains a possible later experiment.
 
-An LLM is one part of an agent's decision process, not the world itself. The agent receives a bounded view of its situation and chooses from available actions. The world simulation decides what those actions cause.
+An LLM is one part of an agent's decision process, not the world itself. The agent receives a bounded view of its situation and chooses from available actions. The world simulation decides what those actions cause. After the brain chooses a resource trip or construction task, the body continues walking or gathering until that action completes; urgent biological needs can interrupt it for a new decision. This prevents each walking step from becoming an unrelated new intention.
 
 ### Traits and behavior
 
@@ -91,7 +91,7 @@ The separate white-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
-- See a complete day and night cycle every 60 seconds of real time, with a matching clock. Agents make a new choice every few seconds; a decision does not automatically advance the day.
+- Advance one biological day every 60 seconds of real elapsed running time, independently of model latency. As requested in the later clock revision, visible sunlight and the local clock follow the spectator's computer time; simulated year/day are displayed separately. Agents can act several times during a biological day.
 - Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
 - Keep dead bodies visible on the ground. Nearby relatives receive the death in their memories and decide whether to mourn, bury, or attend to other needs. Burial leaves a grave marker.
 - Give animals hardcoded NPC behavior for movement, feeding, watering, health, illness, reproduction, and death. Animals do not make LLM calls.
@@ -100,7 +100,7 @@ The separate white-themed frontend should let the spectator:
 - See buildings, resources, hazards, groups, and property.
 - Review world records from the API for births, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters. Keep the main spectator free of a visible timeline.
 - Pause, resume, or advance one day.
-- Change the shared LLM model used by every agent and inspect the resulting changes in their behavior.
+- Inspect the shared Qwen model readiness. Keep each agent's private history intact; broader model comparisons are a later option.
 - Drag events onto a location in the land, with range and severity determined by the world simulation.
 
 ## Guiding principles
@@ -134,3 +134,5 @@ Add tools, skills, construction, property customs, beliefs, rituals, moral syste
 ### Stage 5: Spectator controls and long runs
 
 Add a world-wide model selector, natural event generation, drag-and-drop spectator events, replayable histories, time acceleration, and ways to inspect long-term changes.
+
+The current delivery and the remaining work for these stages are tracked in [implementation-status.md](implementation-status.md). The roadmap is not a claim that all proposed social institutions, tools, or evolutionary mechanisms already exist.

@@ -138,6 +138,9 @@ class Animal(BaseModel):
     disease: str | None = None
     owner_agent_id: str | None = None
     temperament: float = Field(default=0.5, ge=0, le=1)
+    # Livestock products replenish by day, not once per LLM decision.
+    last_product_tick: int = -1
+    last_care_tick: int = -1
 
 
 class CropPlot(BaseModel):
@@ -186,6 +189,16 @@ class Agent(BaseModel):
     parent_ids: list[str] = Field(default_factory=list)
     children_ids: list[str] = Field(default_factory=list)
     last_action: AgentAction | None = None
+    last_result: str = ""
+    decision_source: Literal["llm", "fallback", "continuation", "dependent"] = "dependent"
+    visited_cells: list[str] = Field(default_factory=list)
+    # A brain-selected resource/care intention continues while the body walks to its target.
+    pending_action: AgentAction | None = None
+    construction_project: str | None = None
+    intention_source: Literal["llm", "fallback", "dependent"] = "dependent"
+    decisions_made: int = 0
+    last_rest_recovery_tick: int = -1
+    last_care_tick: int = -1
 
     @property
     def age_years(self) -> float:

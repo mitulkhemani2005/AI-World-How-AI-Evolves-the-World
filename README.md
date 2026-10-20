@@ -6,14 +6,14 @@ AI World is an experimental generational life simulation. Two independent AI min
 
 ## The idea
 
-Two agents start the world: one male and one female. Both use the same spectator-selected local Ollama model, while keeping distinct memories, traits, relationships, and observations. They need to find food and water, rest, respond to illness and danger, communicate, form relationships, and decide whether to have and care for children. As generations grow, they may teach, build homes and property, form groups, fight, create beliefs, or disappear.
+Two agents start the world: one male and one female, in a viable natural habitat near food, wood, and water. Both use the pinned local Ollama model `qwen2.5:0.5b`, while keeping distinct memories, traits, relationships, and observations. They need to find food and water, rest, respond to illness and danger, communicate, form relationships, and decide whether to have and care for children. As generations grow, they may teach, build homes and property, form groups, fight, create beliefs, or disappear.
 
-The spectator does not direct normal daily choices. The world advances on its own once started. A spectator can still change the shared model, inspect and adjust an individual's biology, or drag an event onto the land. Disasters and diseases can also happen through simulation rules without intervention.
+The spectator does not direct normal daily choices. The world advances on its own once started. A spectator can inspect and adjust an individual's biology or drag an event onto the land. Disasters and diseases can also happen through simulation rules without intervention. [Implementation status and further plans](implementation-status.md) distinguishes working mechanisms from future research.
 
 ## What the simulation models
 
 1. Every simulated day, the backend advances seasons, weather, resources, biological needs, disease, pregnancy, age, animal lives, crops, and natural hazards. The spherical world has oceans, rivers, lakes, mountains, grasslands, farmland, deserts, ice, and several forest biomes.
-2. Decision-capable living agents get separate private observations. The same configured LLM proposes each agent's bounded action, with that person's own history and current circumstances.
+2. Decision-capable living agents get separate private observations and a short menu of feasible opportunities. Qwen chooses one intention and explains why. A chosen resource trip continues across physical movement steps; a construction project can gather the required material batch. Source fields distinguish LLM decisions, continued intentions, and inference fallbacks.
 3. The simulation resolves choices under shared world rules. Agents can forage, drink, hunt, tame, care for animals, gather, farm, cook, talk, teach, form groups, build, bond, reproduce, fight, and create cultural beliefs.
 4. Wild animals move, eat, drink, reproduce, and die. Agents can tame domestic species or companions, provide care, collect eggs and milk, or hunt wildlife. Edible plants regrow in suitable biomes.
 5. Farm plots need a farm, knowledge, suitable soil, water, and time. Harvests can fail through drought, fire, or neglect. Raw meat, spoiled food, and contaminated water can cause foodborne or waterborne disease.
@@ -28,9 +28,10 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 
 - See a light, orbitable procedural globe with human figures, wild and domesticated animals, growing crops, resources, forests, and buildings. Its fictional continents are generated from simulation rules and do not copy real Earth geography or satellite imagery. Drag to orbit, scroll to zoom, and click a figure to open that person's life record. If the device blocks WebGL, a 2D compatibility globe still shows terrain and agents.
 - Review age, health, hunger, thirst, energy, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
-- Select one installed Ollama model for the whole world. Each agent still has an independent identity and private history.
+- Every person uses `qwen2.5:0.5b`. Each agent still has an independent identity and private history.
 - Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
-- Run, pause, advance one day, or reset the world. During a run, agents receive a decision opportunity every 2.5 seconds while a complete day and night takes 60 seconds. Age, needs, seasons, disease progression, and ecology advance at day boundaries. The minimalist spectator does not use a name roster or a visible timeline.
+- Run, pause, advance one day, or reset the world. During a run, agents receive an action opportunity about every 2.5 seconds, subject to local inference latency. A separate clock advances biology every 60 real elapsed seconds, including while inference is waiting. Pause discards late model results. The minimalist spectator does not use a name roster or a visible timeline.
+- Start near the people and follow their movement. Use **People**, **Globe**, **+**, and **−** for camera control, or orbit and scroll directly. Action labels show physical work and pending intentions; the inspector explains results and decision sources.
 - Watch the globe's sunlight follow your computer's local clock. The world still advances one biological day per 60 seconds of real elapsed time, with agents making multiple decisions during each day. Every action appears above its agent. Dead people remain visible on the ground until a nearby agent chooses to mourn or bury them.
 - Inspect the world API and its retained event records for debugging and provenance.
 
@@ -90,12 +91,12 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 ## API overview
 
 - `GET /api/health` — API, Ollama, and configured model readiness.
-- `GET /api/models` — installed local models.
+- `GET /api/models` — the supported shared Qwen model and local availability.
 - `GET /api/world` — authoritative world snapshot, including retained event records.
 - `POST /api/world/tick` — manually advance one simulated day and collect one set of agent decisions.
 - `POST /api/world/run?interval_seconds=3` / `POST /api/world/pause` — start or stop autonomous simulation.
 - `POST /api/world/reset?seed=7` — start a fresh world.
-- `PATCH /api/world/model` — switch all agents to one shared model.
+- `PATCH /api/world/model` — validate/apply the pinned shared Qwen model; other models are rejected.
 - `PATCH /api/agents/{agent_id}/state` — adjust an individual's health, hunger, thirst, or energy.
 - `POST /api/events` — apply a geographically bounded spectator event.
 
@@ -104,7 +105,8 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 - [idea.md](idea.md) describes the product theme, agents, biology, culture, and spectator experience.
 - [codebase.md](codebase.md) maps files to responsibilities and gives a debugging path.
 - `frontend/src/app.js` contains the continuous terrain, human figures, direct selection, inspector, controls, and API calls.
-- `frontend/src/styles.css` defines the minimalist dark interface and responsive overlays.
+- `frontend/src/styles.css` defines the minimalist white interface and responsive overlays.
+- `frontend/src/surface-motion.js` handles surface travel without unsupported vector APIs.
 - `frontend/index.html` is the independent frontend entry page; `frontend/vite.config.js` configures the dev API proxy.
 - `backend/app/simulation/engine.py` is the authoritative world engine.
 - `backend/app/agent_brain/ollama_client.py` supplies individual observations and structured choices.
@@ -112,6 +114,17 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 ## Boundaries
 
 The run loop offers a new agent decision every 2.5 seconds; 60 seconds of real time advances one simulated day. The `tick` endpoint is a manual one-day step. The starting period of 6–7 million years ago is thematic; the current small map, life-stage, disease, and hazard rules are simplified assumptions, not calibrated biology or history. LLMs propose choices but cannot directly mutate physics, consent, biology, or persistence.
+
+## Verification
+
+```powershell
+npm test --prefix frontend
+npm run build --prefix frontend
+$env:PYTHONPATH = "backend"
+python -m unittest discover -s backend/tests -v
+```
+
+Frontend checks execute the actual application update and frame functions with real Three.js geometry and math, replacing browser/GPU surfaces. They cover populated frames, movement, UV alignment, figure selection, camera zoom, death, burial, and reset; they do not claim to test a physical GPU. Backend checks use temporary databases and cover the shared-model contract, fallback construction, timing during slow inference, pause, resource conservation, food production, teaching, consent, birth, disease, and persistence.
 
 ## License
 

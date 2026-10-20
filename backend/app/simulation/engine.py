@@ -44,13 +44,16 @@ from app.simulation.rules import (
 class SimulationEngine:
     """Runs a single persisted world; model output never mutates state directly."""
 
-    def __init__(self) -> None:
+    def __init__(self, database_path: str | None = None) -> None:
         self._lock = asyncio.Lock()
         self._tick_lock = asyncio.Lock()
         self._random = random.Random(7)
         self._ollama = OllamaClient()
-        self._store = SQLiteWorldStore(settings.database_path)
+        self._store = SQLiteWorldStore(database_path or settings.database_path)
         self._runner_task: asyncio.Task[None] | None = None
+        self._clock_task: asyncio.Task[None] | None = None
+        self._clock_at: float | None = None
+        self._decision_epoch = 0
         self._tick_interval_seconds = settings.decision_interval_seconds
         self.state = self._store.load() or self._new_world(seed=7)
         self._upgrade_world_map(self.state)
@@ -110,8 +113,23 @@ class SimulationEngine:
             ],
             resources=[],
         )
-        world.terrain = self._generate_terrain(world.width, world.height)
+        world.terrain = self._generate_terrain(world.width, world.height, seed)
         world.resources = self._seed_resources(world)
+        # Start in a viable natural habitat, rather than the old hardcoded mountain summit.
+        habitats = [cell for cell in world.terrain if cell.kind in FARMABLE_TERRAIN]
+        def habitat_score(cell: TerrainCell) -> float:
+            total = self._distance_to(cell.x, cell.y, 18, 8, world.width) * 0.2
+            for kinds, weight in (({"water"}, 2), (FOOD_KINDS, 1), ({"wood"}, 1)):
+                nearest = min((self._distance_to(cell.x, cell.y, node.x, node.y, world.width)
+                               for node in world.resources if node.kind in kinds), default=100)
+                total += nearest * weight
+            return total
+        habitat = min(habitats, key=habitat_score, default=None)
+        if habitat:
+            world.agents[0].x, world.agents[0].y = habitat.x, habitat.y
+            neighbors = self._habitable_neighbors(world, habitat.x, habitat.y)
+            world.agents[1].x, world.agents[1].y = min(neighbors, key=lambda point:
+                habitat_score(self._terrain_at(world, point[0], point[1])))
         world.animals = self._seed_animals(world)
         # The starting pair know one another, but they still choose whether to bond or reproduce.
         world.agents[0].relationship_scores[world.agents[1].id] = 20
@@ -140,7 +158,7 @@ class SimulationEngine:
                 for plot in world.crops:
                     plot.x, plot.y = remap(plot.x, plot.y)
                 world.width, world.height = 36, 18
-            world.terrain = self._generate_terrain(world.width, world.height)
+            world.terrain = self._generate_terrain(world.width, world.height, world.seed)
             # Move people off ocean cells without changing their relative settlement area.
             for person in world.agents:
                 person.x, person.y = self._nearest_land(world, person.x, person.y)
@@ -156,13 +174,17 @@ class SimulationEngine:
         if not any(node.kind in {"fruit", "vegetable"} for node in world.resources):
             world.resources.extend(self._seed_plant_resources(world))
 
-    def _generate_terrain(self, width: int, height: int) -> list[TerrainCell]:
+    def _generate_terrain(self, width: int, height: int, seed: int = 7) -> list[TerrainCell]:
         """Create fictional continents and biomes from smooth seeded mathematical fields."""
         landmasses = [
             (0.48, 0.48, 0.20, 0.34), (0.15, 0.48, 0.13, 0.31),
             (0.81, 0.57, 0.12, 0.23), (0.27, 0.83, 0.12, 0.14),
             (0.75, 0.16, 0.11, 0.15),
         ]
+        terrain_random = random.Random(seed)
+        landmasses = [(cx + terrain_random.uniform(-0.015, 0.015), cy + terrain_random.uniform(-0.015, 0.015),
+                       rx * terrain_random.uniform(0.95, 1.05), ry * terrain_random.uniform(0.95, 1.05))
+                      for cx, cy, rx, ry in landmasses]
         cells: list[TerrainCell] = []
         for y in range(height):
             latitude = y / max(1, height - 1)
@@ -273,17 +295,21 @@ class SimulationEngine:
                 x=cell.x, y=cell.y, hunger=self._random.randint(5, 55),
                 temperament=self._random.uniform(0.1, 0.8),
             ))
-        start_cell = min(habitat_cells, key=lambda cell: self._distance_to(cell.x, cell.y, 18, 8, world.width))
+        founder = world.agents[0]
+        start_cell = min(habitat_cells, key=lambda cell: self._distance_to(cell.x, cell.y, founder.x, founder.y, world.width))
         for species, dx in (("goat", -1), ("chicken", 1), ("dog", 0)):
+            animal_x, animal_y = self._nearest_land(world, (start_cell.x + dx) % world.width, start_cell.y)
             animals.append(Animal(id=str(uuid4()), species=species, sex=self._random.choice(("male", "female")),
-                                  age_days=self._random.randint(200, 1200), x=(start_cell.x + dx) % world.width,
-                                  y=start_cell.y, hunger=20, temperament=self._random.uniform(0.15, 0.7)))
+                                  age_days=self._random.randint(200, 1200), x=animal_x,
+                                  y=animal_y, hunger=20, temperament=self._random.uniform(0.15, 0.7)))
         return animals
 
     async def reset(self, seed: int = 7) -> WorldState:
         async with self._tick_lock:
             async with self._lock:
                 self.state.running = False
+                self._clock_at = None
+                self._decision_epoch += 1
                 self.state = self._new_world(seed)
                 self._save()
                 return self.state.model_copy(deep=True)
@@ -301,6 +327,10 @@ class SimulationEngine:
             # Each interval is an agent decision opportunity, not a whole simulated day.
             self._tick_interval_seconds = min(max(interval_seconds or settings.decision_interval_seconds, 0.5), 10.0)
             self.state.running = True
+            if self._clock_at is None:
+                self._clock_at = time.monotonic()
+            if self._clock_task is None or self._clock_task.done():
+                self._clock_task = asyncio.create_task(self._clock_loop())
             if self._runner_task is None or self._runner_task.done():
                 self._runner_task = asyncio.create_task(self._run_loop())
             self._save()
@@ -308,14 +338,17 @@ class SimulationEngine:
 
     async def pause(self) -> WorldState:
         async with self._lock:
+            self._decision_epoch += 1
+            if self._clock_at is not None:
+                self._advance_time(self.state, max(0, time.monotonic() - self._clock_at))
+            self._clock_at = None
             self.state.running = False
             self._save()
             return self.state.model_copy(deep=True)
 
     async def _run_loop(self) -> None:
         # Keep decisions on a steady real-time cadence even when model calls take a little time.
-        last_cycle_at = time.monotonic()
-        next_cycle_at = last_cycle_at + self._tick_interval_seconds
+        next_cycle_at = time.monotonic() + self._tick_interval_seconds
         while True:
             await asyncio.sleep(max(0, next_cycle_at - time.monotonic()))
             async with self._lock:
@@ -323,10 +356,7 @@ class SimulationEngine:
                     self._runner_task = None
                     return
             try:
-                cycle_at = time.monotonic()
-                elapsed_seconds = max(0, cycle_at - last_cycle_at)
-                last_cycle_at = cycle_at
-                await self._tick_once(elapsed_seconds=elapsed_seconds)
+                await self._tick_once()
                 next_cycle_at += self._tick_interval_seconds
                 if next_cycle_at < time.monotonic():
                     next_cycle_at = time.monotonic()
@@ -341,6 +371,41 @@ class SimulationEngine:
                         self._save()
                     self._runner_task = None
                 return
+
+    async def _clock_loop(self) -> None:
+        """Advance real elapsed time even while Ollama is busy, with no spectator required."""
+        while True:
+            await asyncio.sleep(0.5)
+            async with self._lock:
+                if not self.state.running:
+                    self._clock_at = None
+                    return
+                current = time.monotonic()
+                elapsed = max(0, current - (self._clock_at if self._clock_at is not None else current))
+                self._clock_at = current
+                try:
+                    self._advance_time(self.state, elapsed)
+                except Exception as exc:
+                    self.state.running = False
+                    self.state.processing = False
+                    self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR,
+                                 "The world clock paused after an internal error.", details={"error": str(exc)[:300]})
+                self._save()
+
+    def _advance_time(self, world: WorldState, elapsed_seconds: float = 0, force_day: bool = False) -> None:
+        """All daily consequences share one clock; decision count never advances age."""
+        progress = world.day_progress_seconds + max(0, elapsed_seconds)
+        elapsed_days = 1 if force_day else int(progress // world.day_length_seconds)
+        world.day_progress_seconds = progress % world.day_length_seconds
+        for _ in range(elapsed_days):
+            world.tick += 1
+            self._advance_environment(world)
+            self._regenerate_resources(world)
+            self._advance_ecology(world)
+            self._natural_events(world)
+            for person in tuple(world.agents):
+                if person.alive:
+                    self._advance_biology(world, person)
 
     async def tick(self) -> WorldState:
         """Manually advance one complete simulated day and resolve one decision round."""
@@ -362,23 +427,9 @@ class SimulationEngine:
             async with self._lock:
                 world = self.state
                 world.processing = True
-                if force_day:
-                    elapsed_days = 1
-                else:
-                    progress = world.day_progress_seconds + elapsed_seconds
-                    elapsed_days = int(progress // world.day_length_seconds)
-                    world.day_progress_seconds = progress % world.day_length_seconds
-                # Age, weather, seasons, needs, and ecology move only when a full world-day passes.
-                for _ in range(elapsed_days):
-                    world.tick += 1
-                    self._advance_environment(world)
-                    self._regenerate_resources(world)
-                    self._advance_ecology(world)
-                    self._natural_events(world)
-                    for person in tuple(world.agents):
-                        if person.alive:
-                            self._advance_biology(world, person)
+                self._advance_time(world, elapsed_seconds, force_day)
                 world_id = world.id
+                decision_epoch = self._decision_epoch
                 observation_state = world.model_copy(deep=True)
                 self._save()
 
@@ -392,8 +443,13 @@ class SimulationEngine:
             ]
             # A small concurrency limit keeps the shared local model responsive as families grow.
             decision_slots = asyncio.Semaphore(4)
+            continuing_ids: set[str] = set()
 
             async def decide_one(person: Agent) -> tuple[str, AgentAction | OllamaError]:
+                if person.pending_action and max(person.hunger, person.thirst) < 75 and person.energy >= 15:
+                    # Walking is execution of the person's earlier intention, not a fresh random LLM choice.
+                    continuing_ids.add(person.id)
+                    return person.id, person.pending_action.model_copy(deep=True)
                 async with decision_slots:
                     try:
                         return person.id, await self._ollama.decide(person, observation_state)
@@ -407,15 +463,17 @@ class SimulationEngine:
                     proposals[agent_id] = self._fallback_action(person, observation_state)
                     fallback_errors[agent_id] = str(result)[:240]
                 else:
-                    person = next(person for person in decision_agents if person.id == agent_id)
-                    # Keep LLM personalities, while protecting survival and making shelter work begin reliably.
-                    priority = self._priority_task(person, observation_state)
-                    proposals[agent_id] = priority or result
+                    proposals[agent_id] = result
 
             async with self._lock:
                 world = self.state
                 # A reset cannot race a decision round because reset shares the tick lock.
                 if world.id != world_id:
+                    return world.model_copy(deep=True)
+                if decision_epoch != self._decision_epoch:
+                    # Pause invalidates in-flight intentions instead of letting a late model act afterward.
+                    world.processing = False
+                    self._save()
                     return world.model_copy(deep=True)
                 for agent_id, error in fallback_errors.items():
                     action = proposals[agent_id]
@@ -423,6 +481,12 @@ class SimulationEngine:
                     if agent:
                         self._record(world, EventSource.SYSTEM, EventKind.FALLBACK_DECISION, f"{agent.name}'s model could not decide; a basic survival policy chose instead.", [agent.id], {"error": error, "fallback_action": action.action})
 
+                for person in world.agents:
+                    if person.id in proposals:
+                        person.decision_source = "fallback" if person.id in fallback_errors else "continuation" if person.id in continuing_ids else "llm"
+                        if person.id not in continuing_ids:
+                            person.intention_source = "fallback" if person.id in fallback_errors else "llm"
+                            person.decisions_made += 1
                 handled: set[str] = set()
                 for agent_id, action in proposals.items():
                     if agent_id in handled:
@@ -430,7 +494,10 @@ class SimulationEngine:
                     agent = next((person for person in world.agents if person.id == agent_id and person.alive), None)
                     if not agent:
                         continue
+                    if action.structure_type in BUILDING_RULES and action.action in {"gather", "build"}:
+                        agent.construction_project = action.structure_type
                     if action.action in {"bond", "reproduce"}:
+                        agent.pending_action = None
                         partner_id = action.target_agent_id
                         partner_action = proposals.get(partner_id or "")
                         partner = next((person for person in world.agents if person.id == partner_id and person.alive), None)
@@ -448,7 +515,18 @@ class SimulationEngine:
                         resolved_action = self._prepare_corpse_action(world, agent, action)
                         if resolved_action is action:
                             resolved_action = self._prepare_resource_action(world, agent, action)
+                        agent.pending_action = action.model_copy(deep=True) if (
+                            resolved_action.action == "move" and action.action != "move"
+                        ) else None
                         result = self._apply_action(world, agent, resolved_action)
+                        # A chosen building project can gather its batch without repeatedly asking the brain.
+                        if action.action == "gather" and action.structure_type in BUILDING_RULES:
+                            cost = BUILDING_RULES[action.structure_type][1]
+                            if (resolved_action.action == "gather" and result.startswith("Gathered")
+                                and agent.inventory.get(action.resource_kind or "wood", 0) < cost.get(action.resource_kind or "wood", 0)):
+                                agent.pending_action = action.model_copy(deep=True)
+                        if result.startswith("Built") and action.structure_type == agent.construction_project:
+                            agent.construction_project = None
                         self._record_action(
                             world,
                             agent,
@@ -567,6 +645,8 @@ class SimulationEngine:
             cell = self._terrain_at(world, next_x, next_y)
             if cell and cell.kind == "ocean":
                 return "The ocean blocked the way; find a land route."
+            if (next_x, next_y) == (agent.x, agent.y):
+                return "Stayed in place; no movement step was proposed."
             agent.x, agent.y = next_x, next_y
             if cell and cell.kind == "mountain":
                 agent.energy = max(0, agent.energy - 3)
@@ -598,7 +678,9 @@ class SimulationEngine:
             return "Found water and drank."
         if action.action == "rest":
             agent.energy = min(100, agent.energy + 30)
-            agent.health = min(100, agent.health + 2)
+            if agent.last_rest_recovery_tick != world.tick:
+                agent.health = min(100, agent.health + 2)
+                agent.last_rest_recovery_tick = world.tick
             return "Rested and recovered some energy."
         if action.action in {"mourn", "bury"}:
             deceased = next((person for person in world.agents
@@ -670,10 +752,23 @@ class SimulationEngine:
             target = self._nearby_target(world, agent, action.target_agent_id, 1)
             if not target:
                 return "No one nearby could be helped."
-            target.health = min(100, target.health + 8)
-            target.hunger = max(0, target.hunger - 10)
-            target.thirst = max(0, target.thirst - 10)
-            target.energy = min(100, target.energy + 8)
+            if target.last_care_tick != world.tick:
+                target.health = min(100, target.health + 4)
+                target.energy = min(100, target.energy + 4)
+                target.last_care_tick = world.tick
+            food = next((node for node in world.resources if node.kind in FOOD_KINDS
+                         and node.quantity > 0 and self._distance_to(node.x, node.y, agent.x, agent.y, world.width) <= 1), None)
+            water = next((node for node in world.resources if node.kind == "water"
+                          and node.quantity > 0 and self._distance_to(node.x, node.y, agent.x, agent.y, world.width) <= 1), None)
+            if food and target.hunger > 35:
+                food.quantity -= 1
+                target.hunger = max(0, target.hunger - 25)
+                self._foodborne_risk(world, target, food)
+            if water and target.thirst > 35:
+                water.quantity -= 1
+                target.thirst = max(0, target.thirst - 30)
+                if water.contamination >= 15 and self._random.random() < water.contamination / 100:
+                    self._infect(world, target, "waterborne infection", EventSource.NATURAL)
             self._adjust_relationship(agent, target, 5)
             self._remember(target, f"{agent.name} cared for you.")
             return f"Helped {target.name}."
@@ -761,9 +856,19 @@ class SimulationEngine:
         animal = next((item for item in world.animals if item.id == animal_id and item.alive), None)
         if not animal or animal.animal_type == "wild" or animal.owner_agent_id != agent.id or self._distance(agent, animal) > 1:
             return "No owned domestic animal or pet was close enough to care for."
-        animal.hunger = max(0, animal.hunger - 28)
-        animal.thirst = max(0, animal.thirst - 25)
-        animal.health = min(100, animal.health + 5)
+        food = next((node for node in world.resources if node.kind in FOOD_KINDS and node.quantity > 0
+                     and self._distance_to(node.x, node.y, agent.x, agent.y, world.width) <= 1), None)
+        water = next((node for node in world.resources if node.kind == "water" and node.quantity > 0
+                      and self._distance_to(node.x, node.y, agent.x, agent.y, world.width) <= 1), None)
+        if food and animal.hunger > 10:
+            food.quantity -= 1
+            animal.hunger = max(0, animal.hunger - 28)
+        if water and animal.thirst > 10:
+            water.quantity -= 1
+            animal.thirst = max(0, animal.thirst - 25)
+        if animal.last_care_tick != world.tick:
+            animal.health = min(100, animal.health + 5)
+            animal.last_care_tick = world.tick
         agent.energy = max(0, agent.energy - 2)
         self._record(world, EventSource.AGENT_ACTION, EventKind.CARE,
                      f"{agent.name} cared for their {animal.species}.", [agent.id],
@@ -779,8 +884,12 @@ class SimulationEngine:
             return f"The {animal.species} does not produce collectable food."
         if animal.health < 30 or animal.hunger > 90 or animal.thirst > 90:
             return f"The {animal.species} needs care before it can produce food."
+        if animal.last_product_tick == world.tick:
+            return f"The {animal.species} has already supplied food today."
         self._add_food_resource(world, product_kind, agent.x, agent.y, 2, contamination=animal.disease and 12 or 0)
-        animal.energy = max(0, animal.energy - 2)
+        animal.last_product_tick = world.tick
+        animal.hunger = min(100, animal.hunger + 3)
+        agent.energy = max(0, agent.energy - 2)
         self._record(world, EventSource.AGENT_ACTION, EventKind.ACTION,
                      f"{agent.name} collected {product_kind} from a domestic {animal.species}.", [agent.id],
                      {"action": "collect_animal_food", "animal_id": animal.id, "food": product_kind})
@@ -855,13 +964,14 @@ class SimulationEngine:
         agent.age_days += 1
         shelter = self._has_shelter(world, agent)
         exposed = not shelter and world.weather in {"cold", "rain", "wind"}
-        agent.hunger = min(100, agent.hunger + (0.9 if agent.age_days < 6 * 365 else 1.4) + (0.35 if exposed else 0))
-        agent.thirst = min(100, agent.thirst + (1.2 if agent.age_days < 6 * 365 else 2.0))
-        agent.energy = max(0, agent.energy - (0.5 if agent.age_days < 6 * 365 else 1.0))
+        # Needs represent daily meals, water and sleep, rather than weeks between survival tasks.
+        agent.hunger = min(100, agent.hunger + (14 if agent.age_days < 6 * 365 else 18) + (4 if exposed else 0))
+        agent.thirst = min(100, agent.thirst + (18 if agent.age_days < 6 * 365 else 24))
+        agent.energy = max(0, agent.energy - (8 if agent.age_days < 6 * 365 else 12))
 
         # Shelter protects from exposure, but not from direct hazards or disease.
         if exposed:
-            agent.energy = max(0, agent.energy - 0.6)
+            agent.energy = max(0, agent.energy - 6)
             if world.weather == "cold":
                 agent.health = max(0, agent.health - (0.4 if agent.age_days < 6 * 365 else 0.7))
             elif world.weather == "rain" and agent.disease is None and self._random.random() < 0.002:
@@ -1188,123 +1298,14 @@ class SimulationEngine:
         self._record(world, EventSource.NATURAL, EventKind.NATURAL_EVENT, f"A {kind} occurred near ({x}, {y}).", affected, {"event": kind, "x": x, "y": y})
 
     def _fallback_action(self, agent: Agent, world: WorldState) -> AgentAction:
-        """Conservative local behavior keeps the world alive while Ollama is unavailable."""
-        nearby_body = next((person for person in world.agents if not person.alive and not person.buried
-                            and self._distance(agent, person) <= 3), None)
-        if nearby_body and self._is_related(agent, nearby_body):
-            if self._distance(agent, nearby_body) > 1:
-                return self._move_or_act(world, agent, nearby_body, "mourn",
-                                         f"Approach relative {nearby_body.name}")
-            if agent.age_days >= ADULT_AGE_DAYS and self._random.random() < 0.55:
-                return AgentAction(action="bury", target_agent_id=nearby_body.id,
-                                   reason="Bury a deceased family member")
-            return AgentAction(action="mourn", target_agent_id=nearby_body.id,
-                               reason="Mourn a deceased family member")
-        if agent.thirst >= 48:
-            water = self._nearest_resource(world, "water", agent)
-            if water:
-                return self._move_or_act(world, agent, water, "drink", "Find water")
-        if agent.hunger >= 48:
-            food = self._nearest_food(world, agent)
-            if food:
-                return self._move_or_act(world, agent, food, "forage", "Find food")
-        child_needing_care = next(
-            (a for a in world.agents if a.alive and a.age_days < 3 * 365 and self._distance(agent, a) <= 1 and (a.hunger > 55 or a.thirst > 55 or a.health < 60)),
-            None,
-        )
-        if child_needing_care:
-            return AgentAction(action="help", target_agent_id=child_needing_care.id, reason="Care for a nearby child")
-        if agent.health < 60 or agent.energy < 35:
-            return AgentAction(action="rest", reason="Recover health and energy")
-        learner = next(
-            (a for a in world.agents if a.alive and 3 * 365 <= a.age_days < ADULT_AGE_DAYS and self._distance(agent, a) <= 1 and any(item not in a.knowledge for item in agent.knowledge)),
-            None,
-        )
-        if learner and agent.knowledge:
-            lesson = next(item for item in agent.knowledge if item not in learner.knowledge)
-            return AgentAction(action="teach", target_agent_id=learner.id, message=lesson, reason="Pass learned knowledge to a child")
-        if self._adult(agent) and not agent.bonded_partner_id:
-            possible_partner = next(
-                (a for a in world.agents if a.alive and a.id != agent.id and self._adult(a) and self._distance(agent, a) <= 1 and a.sex != agent.sex),
-                None,
-            )
-            if possible_partner:
-                return AgentAction(action="bond", target_agent_id=possible_partner.id, reason="Form a mutual bond")
-        partner = next((a for a in world.agents if a.id == agent.bonded_partner_id and a.alive), None)
-        pregnant_person = agent if agent.sex == "female" else partner
-        if (
-            partner and partner.alive and self._adult(agent) and self._adult(partner)
-            and agent.sex != partner.sex and pregnant_person
-            and pregnant_person.pregnancy_days_remaining is None
-            and max(agent.hunger, partner.hunger, agent.thirst, partner.thirst) < 45
-            and world.tick % 14 == 0
-        ):
-            return AgentAction(action="reproduce", target_agent_id=partner.id, reason="Choose to have a child")
-        # Once immediate needs are met, agents keep gathering/building until each household has cover.
-        shelter_target = max(1, math.ceil(sum(person.alive for person in world.agents) / 2))
-        shelter_count = sum(structure.kind in SHELTER_KINDS for structure in world.structures)
-        if self._adult(agent) and shelter_count < shelter_target:
-            preferred = "lean_to" if world.tech_level == 0 else "hut" if world.tech_level == 1 else "communal_house"
-            required_level, cost = BUILDING_RULES[preferred]
-            missing = [resource for resource, amount in cost.items() if agent.inventory.get(resource, 0) < amount]
-            if not missing and world.tech_level >= required_level:
-                return AgentAction(action="build", structure_type=preferred, reason="Build shelter with available materials")
-            resource_kind = next(iter(missing), "wood")
-            resource = self._nearest_resource(world, resource_kind, agent)
-            if resource:
-                if (resource.x, resource.y) == (agent.x, agent.y):
-                    return AgentAction(action="gather", resource_kind=resource_kind, reason="Gather materials for shelter")
-                return self._move_or_act(world, agent, resource, "gather", "Find building materials", resource_kind)
-        if self._random.random() < 0.08:
-            return AgentAction(action="communicate", target_agent_id=next((a.id for a in world.agents if a.alive and a.id != agent.id and self._distance(agent, a) <= 3), None), message="Food and water matter for our survival.", reason="Share a survival idea")
-        return AgentAction(action="rest", reason="No immediate need")
-
-    def _priority_task(self, agent: Agent, world: WorldState) -> AgentAction | None:
-        """Enforce urgent biological needs and give an unsheltered population a concrete work goal."""
-        if agent.thirst >= 65:
-            water = self._nearest_resource(world, "water", agent)
-            if water:
-                return self._move_or_act(world, agent, water, "drink", "Urgent need for clean water")
-        if agent.hunger >= 65:
-            food = self._nearest_food(world, agent)
-            if food:
-                return self._move_or_act(world, agent, food, "forage", "Urgent need for food")
-        if agent.health < 35 or agent.energy < 12:
-            return AgentAction(action="rest", reason="Recover from poor health or exhaustion")
-        child_needing_care = next(
-            (child for child in world.agents if child.alive and child.age_days < 3 * 365
-             and self._distance(agent, child) <= 1
-             and (child.hunger > 55 or child.thirst > 55 or child.health < 60)),
-            None,
-        )
-        if child_needing_care:
-            return AgentAction(action="help", target_agent_id=child_needing_care.id,
-                               reason="Care for a nearby child")
-        bereaved_relative = next(
-            (person for person in world.agents if not person.alive and not person.buried
-             and self._is_related(agent, person) and self._distance(agent, person) <= 3),
-            None,
-        )
-        if bereaved_relative:
-            if self._distance(agent, bereaved_relative) > 1:
-                return self._move_or_act(world, agent, bereaved_relative, "mourn",
-                                         f"Approach relative {bereaved_relative.name}")
-            return AgentAction(action="mourn", target_agent_id=bereaved_relative.id,
-                               reason="Mourn a deceased family member")
-
-        shelter_target = max(1, math.ceil(sum(person.alive for person in world.agents) / 2))
-        shelter_count = sum(structure.kind in SHELTER_KINDS for structure in world.structures)
-        if self._adult(agent) and shelter_count < shelter_target:
-            preferred = "lean_to" if world.tech_level == 0 else "hut" if world.tech_level == 1 else "communal_house"
-            required_level, cost = BUILDING_RULES[preferred]
-            missing = [name for name, amount in cost.items() if agent.inventory.get(name, 0) < amount]
-            if not missing and world.tech_level >= required_level:
-                return AgentAction(action="build", structure_type=preferred, reason="Build the population's first shelter")
-            resource_kind = next(iter(missing), "wood")
-            resource = self._nearest_resource(world, resource_kind, agent)
-            if resource:
-                return self._move_or_act(world, agent, resource, "gather", "Gather materials for a needed shelter", resource_kind)
-        return None
+        """Use local feasible opportunities only when inference fails; never fabricate consent or culture."""
+        choices = self._ollama.action_choices(agent, world)
+        safe = [action for action in choices if action.action not in {
+            "bond", "reproduce", "fight", "create_belief", "form_group", "join_group"
+        }]
+        if agent.last_action and agent.last_action.action == "communicate":
+            safe = [action for action in safe if action.action != "communicate"] or safe
+        return safe[0] if safe else AgentAction(action="rest", reason="No safe local opportunity")
 
     def _prepare_resource_action(self, world: WorldState, agent: Agent, action: AgentAction) -> AgentAction:
         """Turn a resource choice into one sensible step when its target is farther away."""
@@ -1322,16 +1323,7 @@ class SimulationEngine:
         if local_resource and local_resource.quantity > 0:
             return action
         # The engine may only route toward a resource that this person can currently observe.
-        visible_targets = [
-            node for node in world.resources
-            if node.kind == resource_kind and node.quantity > 0
-            and self._distance_to(node.x, node.y, agent.x, agent.y) <= 5
-        ]
-        target = min(
-            visible_targets,
-            key=lambda node: self._distance_to(agent.x, agent.y, node.x, node.y),
-            default=None,
-        )
+        target = self._nearest_resource(world, resource_kind, agent)
         if not target:
             return action
         return self._move_or_act(
@@ -1374,15 +1366,10 @@ class SimulationEngine:
         world.structures.append(structure)
         self._learn(agent, f"building:{kind}")
         old_level = world.tech_level
-        world.tech_level = min(3, len(world.structures) // 2)
+        world.tech_level = max(old_level, min(3, len(world.structures) // 2))
         if world.tech_level > old_level:
             self._record(world, EventSource.AGENT_ACTION, EventKind.DISCOVERY, f"The community developed new building knowledge (level {world.tech_level}).", [agent.id])
-        if kind == "farm":
-            existing_food = self._resource_at(world, "food", agent.x, agent.y)
-            if existing_food:
-                existing_food.quantity = min(existing_food.capacity, existing_food.quantity + 12)
-            else:
-                world.resources.append(ResourceNode(kind="food", x=agent.x, y=agent.y, quantity=12, capacity=24))
+        # A farm provides a place to cultivate. Food comes from planting, growth and harvesting.
         self._record(world, EventSource.AGENT_ACTION, EventKind.CONSTRUCTION, f"{agent.name} built a {kind.replace('_', ' ')}.", [agent.id], {"structure_id": structure.id, "owner_agent_id": agent.id, "cost": cost})
         return f"Built a {kind.replace('_', ' ')}."
 
@@ -1673,12 +1660,18 @@ class SimulationEngine:
         second.relationship_scores[first.id] = min(100, max(-100, second.relationship_scores.get(first.id, 0) + amount))
 
     def _nearest_resource(self, world: WorldState, kind: str, agent: Agent) -> ResourceNode | None:
-        options = [r for r in world.resources if r.kind == kind and r.quantity > 0]
-        return min(options, key=lambda r: self._distance_to(agent.x, agent.y, r.x, r.y, world.width), default=None)
+        return self._reachable_local_resource(world, agent, {kind})
 
     def _nearest_food(self, world: WorldState, agent: Agent) -> ResourceNode | None:
-        options = [node for node in world.resources if node.kind in FOOD_KINDS and node.quantity > 0]
-        return min(options, key=lambda node: self._distance_to(agent.x, agent.y, node.x, node.y, world.width), default=None)
+        return self._reachable_local_resource(world, agent, FOOD_KINDS)
+
+    def _reachable_local_resource(self, world: WorldState, agent: Agent, kinds: set[str]) -> ResourceNode | None:
+        # Navigation must not reveal food on an unseen continent or loop against an ocean barrier.
+        options = [node for node in world.resources if node.kind in kinds and node.quantity > 0
+                   and OllamaClient._distance(agent.x, agent.y, node.x, node.y, world.width) <= 5]
+        options.sort(key=lambda node: (self._distance_to(agent.x, agent.y, node.x, node.y, world.width), node.contamination))
+        return next((node for node in options if self._move_or_act(
+            world, agent, node, "gather", "Navigate to a visible resource").action != "rest"), None)
 
     def _move_or_act(
         self,
@@ -1731,7 +1724,14 @@ class SimulationEngine:
         proposed_action: AgentAction | None = None,
     ) -> None:
         agent.last_action = action
-        details: dict[str, object] = {"action": action.action, "reason": action.reason, "result": result}
+        agent.last_result = result
+        place = f"{agent.x}:{agent.y}"
+        if place not in agent.visited_cells:
+            agent.visited_cells.append(place)
+            agent.visited_cells = agent.visited_cells[-128:]
+        details: dict[str, object] = {"action": action.action, "reason": action.reason, "result": result,
+                                     "decision_source": agent.decision_source, "intention_source": agent.intention_source,
+                                     "x": agent.x, "y": agent.y}
         if proposed_action:
             details["proposed_action"] = proposed_action.action
         SimulationEngine._record(world, EventSource.AGENT_ACTION, EventKind.ACTION, f"{agent.name}: {result}", [agent.id], details)

@@ -34,7 +34,8 @@ async def available_models() -> dict[str, object]:
     """Expose only the model supported by this simulation."""
     models = await OllamaClient().installed_models()
     model = settings.ollama_model
-    return {"available": models is not None, "models": [model] if models and model in models else [model]}
+    return {"available": models is not None, "models": [model] if models and model in models else [],
+            "supported_model": model, "model_ready": bool(models and model in models)}
 
 
 @router.get("/world", response_model=WorldState)

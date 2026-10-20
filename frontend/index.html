@@ -23,6 +23,13 @@
       <section class="world-stage" aria-label="Interactive 3D globe simulation">
         <div class="world-caption"><span class="eyebrow">A FICTIONAL LIVING WORLD</span><h1>Life finds a way.</h1><p id="world-summary">Two lives. One world. No human guidance.</p></div>
         <div id="world-scene" class="world-scene" aria-label="Drag to orbit the fictional globe, scroll to zoom, click a person to inspect"></div>
+        <div id="scene-status" class="scene-status" role="status">Loading the living world…</div>
+        <nav class="view-controls" aria-label="World camera">
+          <button id="view-people" type="button">People</button>
+          <button id="view-world" type="button">Globe</button>
+          <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+          <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+        </nav>
         <div class="world-hint"><span>DRAG TO ORBIT</span><i></i><span>SCROLL TO ZOOM</span><i></i><span>CLICK A PERSON · LABELS SHOW ACTIONS</span></div>
 
         <aside class="world-hud" aria-label="World conditions">
