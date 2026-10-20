@@ -13,7 +13,7 @@
 │   ├── vite.config.js                  # Dev server and FastAPI /api proxy
 │   ├── package.json / package-lock.json# Three.js and Vite dependencies
 │   └── src/
-│       ├── app.js                      # Procedural globe, biomes, figures, ecology, and API UI
+│       ├── app.js                      # 3D globe, figures, API UI, and 2D fallback for unavailable WebGL
 │       └── styles.css                  # White, responsive spectator interface
 └── backend/
     ├── requirements.txt                # FastAPI, Uvicorn, and HTTPX dependencies

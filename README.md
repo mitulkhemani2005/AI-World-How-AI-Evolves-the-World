@@ -26,7 +26,7 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 
 ## Spectator experience
 
-- See a dark, orbitable procedural globe with human figures, wild and domesticated animals, growing crops, resources, forests, and buildings. Its fictional continents are generated from simulation rules and do not copy real Earth geography or satellite imagery. Drag to orbit, scroll to zoom, and click a figure to open that person's life record.
+- See a light, orbitable procedural globe with human figures, wild and domesticated animals, growing crops, resources, forests, and buildings. Its fictional continents are generated from simulation rules and do not copy real Earth geography or satellite imagery. Drag to orbit, scroll to zoom, and click a figure to open that person's life record. If the device blocks WebGL, a 2D compatibility globe still shows terrain and agents.
 - Review age, health, hunger, thirst, energy, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
 - Select one installed Ollama model for the whole world. Each agent still has an independent identity and private history.
 - Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.

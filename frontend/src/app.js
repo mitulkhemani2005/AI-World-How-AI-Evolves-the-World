@@ -37,14 +37,43 @@ function notify(message, error = false) {
 }
 
 // Build an open 3D habitat: the mesh is continuous and has no tile borders.
-const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
-renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.outputColorSpace = THREE.SRGBColorSpace;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.12;
-host.appendChild(renderer.domElement);
+let fallbackContext = null;
+let fallbackPixelRatio = 1;
+let renderer;
+try {
+  // Prefer the full 3D scene, but do not let a blocked WebGL context disable the whole frontend.
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.7));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.12;
+  host.appendChild(renderer.domElement);
+} catch (error) {
+  // A 2D globe fallback keeps terrain, people, and controls visible on systems without WebGL.
+  console.error("WebGL initialization failed; using the compatibility globe.", error);
+  const canvas = document.createElement("canvas");
+  canvas.setAttribute("aria-label", "Compatibility view of the simulated world");
+  canvas.style.width = "100%";
+  canvas.style.height = "100%";
+  host.appendChild(canvas);
+  fallbackContext = canvas.getContext("2d");
+  if (!fallbackContext) throw error;
+  renderer = {
+    domElement: canvas,
+    shadowMap: { enabled: false, type: null },
+    capabilities: { getMaxAnisotropy: () => 1 },
+    setPixelRatio(value) { fallbackPixelRatio = value; },
+    setSize(width, height) {
+      canvas.width = Math.max(1, Math.round(width * fallbackPixelRatio));
+      canvas.height = Math.max(1, Math.round(height * fallbackPixelRatio));
+      fallbackContext.setTransform(fallbackPixelRatio, 0, 0, fallbackPixelRatio, 0, 0);
+    },
+    render() { drawCompatibilityGlobe(); },
+  };
+  notify("Using compatibility globe because WebGL is unavailable.", true);
+}
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xf4f5f1);
@@ -128,6 +157,93 @@ function sceneToWorld(point) {
     x: (Math.floor(((longitude + Math.PI) / (Math.PI * 2)) * worldWidth) + worldWidth) % worldWidth,
     y: THREE.MathUtils.clamp(Math.floor(((Math.PI / 2 - latitude) / Math.PI) * worldHeight), 0, worldHeight - 1),
   };
+}
+
+function drawCompatibilityGlobe() {
+  if (!fallbackContext) return;
+  const context = fallbackContext;
+  const width = host.clientWidth;
+  const height = host.clientHeight;
+  const centerX = width / 2;
+  const centerY = height / 2;
+  const radius = Math.max(40, Math.min(width * 0.32, height * 0.39));
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#f4f5f1";
+  context.fillRect(0, 0, width, height);
+
+  const sphere = context.createRadialGradient(centerX - radius * 0.35, centerY - radius * 0.4, radius * 0.08, centerX, centerY, radius);
+  sphere.addColorStop(0, "#6ea7c1");
+  sphere.addColorStop(0.72, "#28658a");
+  sphere.addColorStop(1, "#17445f");
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.fillStyle = sphere;
+  context.fill();
+  context.save();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.clip();
+
+  const cameraDirection = camera.position.clone().normalize();
+  const right = new THREE.Vector3(1, 0, 0).applyQuaternion(camera.quaternion).normalize();
+  const up = new THREE.Vector3(0, 1, 0).applyQuaternion(camera.quaternion).normalize();
+  const colors = {
+    plains: "#d0bd82", grassland: "#98ad63", farmland: "#c4ac69", forest: "#4d7654",
+    rainforest: "#347954", boreal_forest: "#66866c", mountain: "#929790", desert: "#d4ad70",
+    ice: "#d9ecee", river: "#398ca0", lake: "#347d9b",
+  };
+  if (world?.terrain?.length) {
+    for (const cell of world.terrain) {
+      const color = colors[cell.kind];
+      if (!color) continue;
+      const normal = worldToScene(cell.x, cell.y).normalize();
+      const facing = normal.dot(cameraDirection);
+      if (facing <= 0) continue;
+      const x = centerX + normal.dot(right) * radius;
+      const y = centerY - normal.dot(up) * radius;
+      // Slightly overlap round biome marks to suggest continuous land without tile borders.
+      context.beginPath();
+      context.arc(x, y, radius * 0.105, 0, Math.PI * 2);
+      context.globalAlpha = THREE.MathUtils.clamp(0.72 + facing * 0.28, 0, 1);
+      context.fillStyle = color;
+      context.fill();
+    }
+  }
+  context.globalAlpha = 1;
+
+  for (const agent of world?.agents || []) {
+    const normal = worldToScene(agent.x, agent.y).normalize();
+    if (normal.dot(cameraDirection) <= 0) continue;
+    const x = centerX + normal.dot(right) * radius;
+    const y = centerY - normal.dot(up) * radius;
+    context.beginPath();
+    context.arc(x, y, agent.alive ? 7 : 5, 0, Math.PI * 2);
+    context.fillStyle = agent.alive ? (agent.sex === "female" ? "#a65e47" : "#476d49") : "#77736d";
+    context.fill();
+    context.strokeStyle = "#ffffff";
+    context.lineWidth = 2;
+    context.stroke();
+    context.font = "12px sans-serif";
+    context.fillStyle = "#26352b";
+    context.fillText(agent.name, x + 9, y - 8);
+  }
+  for (const animal of world?.animals || []) {
+    if (!animal.alive) continue;
+    const normal = worldToScene(animal.x, animal.y).normalize();
+    if (normal.dot(cameraDirection) <= 0) continue;
+    const x = centerX + normal.dot(right) * radius;
+    const y = centerY - normal.dot(up) * radius;
+    context.beginPath();
+    context.arc(x, y, 3.5, 0, Math.PI * 2);
+    context.fillStyle = animal.animal_type === "wild" ? "#815b42" : "#b47b48";
+    context.fill();
+  }
+  context.restore();
+  context.beginPath();
+  context.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  context.strokeStyle = "rgba(57, 94, 79, .38)";
+  context.lineWidth = 1.5;
+  context.stroke();
 }
 
 function createTerrain(nextWorld = null) {
