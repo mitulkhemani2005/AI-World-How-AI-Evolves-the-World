@@ -1,6 +1,6 @@
 # AI World: How AI Evolves the World
 
-AI World is an experimental generational life simulation. Two independent AI minds begin in an early hominin world and make choices about survival, relationships, learning, conflict, and culture. A FastAPI backend owns biology and world rules; a separate Three.js frontend lets the spectator watch their lives unfold on a NASA Blue Marble Earth.
+AI World is an experimental generational life simulation. Two independent AI minds begin in an early hominin world and make choices about survival, relationships, learning, conflict, and culture. A FastAPI backend owns biology and world rules; a separate Three.js frontend lets the spectator watch their lives unfold in a continuous, tile-free 3D land habitat.
 
 > **Status:** Local playable prototype. It explores a fictional simulation design; it is not a scientific reconstruction of hominin evolution or a prediction of human history.
 
@@ -8,7 +8,7 @@ AI World is an experimental generational life simulation. Two independent AI min
 
 Two agents start the world: one male and one female. Both use the same spectator-selected local Ollama model, while keeping distinct memories, traits, relationships, and observations. They need to find food and water, rest, respond to illness and danger, communicate, form relationships, and decide whether to have and care for children. As generations grow, they may teach, build homes and property, form groups, fight, create beliefs, or disappear.
 
-The spectator does not direct normal daily choices. The world advances on its own once started. A spectator can still change the shared model, inspect and adjust an individual's biology, or drag an event onto the globe. Disasters and diseases can also happen through simulation rules without intervention.
+The spectator does not direct normal daily choices. The world advances on its own once started. A spectator can still change the shared model, inspect and adjust an individual's biology, or drag an event onto the land. Disasters and diseases can also happen through simulation rules without intervention.
 
 ## What the simulation models
 
@@ -16,16 +16,16 @@ The spectator does not direct normal daily choices. The world advances on its ow
 2. Decision-capable living agents get separate private observations. The same configured LLM proposes each agent's bounded action, with that person's own history and current circumstances.
 3. The simulation resolves choices under shared world rules. Agents can forage, drink, move, rest, gather, talk, help, teach, form groups, build, bond, reproduce, fight, and create cultural beliefs.
 4. Need, injury, disease, exposure, conflict, and aging can cause death at any age. Children depend on caregivers and can learn through agent teaching.
-5. The backend persists each world in SQLite. The frontend reads snapshots and displays agents and world objects on the globe.
+5. The backend persists each world in SQLite. The frontend reads snapshots and displays agents and world objects across the land.
 
 If Ollama is unavailable or a response is invalid, a recorded survival fallback keeps the prototype moving. That fallback is a rule-based decision, not an LLM response.
 
 ## Spectator experience
 
-- See a dark, orbitable 3D Earth with human figures, resources, and buildings. Drag to rotate, scroll to zoom, and click a figure to open that person's life record.
+- See a dark, orbitable 3D landscape with human figures, resources, trees, and buildings. The land is one continuous terrain surface, with no map tiles or planet-sized globe. Drag to orbit, scroll to zoom, and click a figure to open that person's life record.
 - Review age, health, hunger, thirst, energy, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
 - Select one installed Ollama model for the whole world. Each agent still has an independent identity and private history.
-- Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
+- Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the land. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
 - Run, pause, advance one day, or reset the world. The minimalist spectator does not use a name roster or a visible timeline.
 - Inspect the world API and its retained event records for debugging and provenance.
 
@@ -35,7 +35,6 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 - **Backend:** Python, FastAPI, Pydantic, HTTPX.
 - **Decision model:** Ollama, default model `gemma4:e2b`, shared across agents.
 - **Persistence:** SQLite world snapshots.
-- **Earth imagery:** NASA/Goddard Space Flight Center Scientific Visualization Studio, [Blue Marble seamless Earth mosaic](https://svs.gsfc.nasa.gov/2915/). The image is bundled locally in `frontend/public/earth/`, so the running globe does not need to fetch its texture from a third-party host.
 
 ## Local setup
 
@@ -99,7 +98,7 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 
 - [idea.md](idea.md) describes the product theme, agents, biology, culture, and spectator experience.
 - [codebase.md](codebase.md) maps files to responsibilities and gives a debugging path.
-- `frontend/src/app.js` contains the globe, human figures, direct selection, inspector, controls, and API calls.
+- `frontend/src/app.js` contains the continuous terrain, human figures, direct selection, inspector, controls, and API calls.
 - `frontend/src/styles.css` defines the minimalist dark interface and responsive overlays.
 - `frontend/index.html` is the independent frontend entry page; `frontend/vite.config.js` configures the dev API proxy.
 - `backend/app/simulation/engine.py` is the authoritative world engine.
@@ -111,4 +110,4 @@ One tick is one simulated day. The starting period of 6–7 million years ago is
 
 ## License
 
-MIT. See [LICENSE](LICENSE). The NASA Earth image is separately credited to NASA/Goddard Space Flight Center Scientific Visualization Studio and the Blue Marble data contributors.
+MIT. See [LICENSE](LICENSE).

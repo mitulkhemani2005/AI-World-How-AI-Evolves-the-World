@@ -82,15 +82,15 @@ The human is primarily an observer. The simulation runs autonomously after its r
 
 The separate dark-themed frontend should let the spectator:
 
-- Orbit and zoom around a 3D Earth rendered from a bundled satellite texture, with human figures placed on the early-hominin habitat.
-- Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, and current action. Do not require selecting agents from a name roster.
+- Orbit and zoom around a continuous 3D land habitat with hills, water, trees, and visible human figures. Do not render a globe or a tiled map.
+- Click a human figure directly on the land to inspect needs, health, memories, relationships, lineage, and current action. Do not require selecting agents from a name roster.
 - Adjust selected biological stats through that person's inspector, with changes applied by simulation rules.
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.
 - Review world records from the API for births, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters. Keep the main spectator free of a visible timeline.
 - Pause, resume, or advance one day.
 - Change the shared LLM model used by every agent and inspect the resulting changes in their behavior.
-- Drag events onto a location or person, with range and severity determined by the world simulation.
+- Drag events onto a location in the land, with range and severity determined by the world simulation.
 
 ## Guiding principles
 

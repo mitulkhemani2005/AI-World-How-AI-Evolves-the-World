@@ -12,9 +12,8 @@
 │   ├── index.html                      # Standalone Vite app shell
 │   ├── vite.config.js                  # Dev server and FastAPI /api proxy
 │   ├── package.json / package-lock.json# Three.js and Vite dependencies
-│   ├── public/earth/bluemarble-2048.png# Bundled NASA Earth texture
 │   └── src/
-│       ├── app.js                      # Globe, human models, UI, API interactions
+│       ├── app.js                      # Continuous terrain, human figures, API UI
 │       └── styles.css                  # Dark, responsive spectator interface
 └── backend/
     ├── requirements.txt                # FastAPI, Uvicorn, and HTTPX dependencies
@@ -40,10 +39,9 @@
 | `backend/app/storage/sqlite_store.py` | Reads and writes the authoritative world snapshot. | State does not persist or migration looks wrong. |
 | `backend/app/main.py` | API-only FastAPI setup, configurable CORS, and engine shutdown. | Backend startup, CORS, or shutdown fails. |
 | `frontend/index.html` | Standalone spectator shell and overlay element IDs. | A UI control or overlay is missing. |
-| `frontend/src/app.js` | Three.js Earth, surface coordinates, human figures, labels, click selection, inspector, event drops, and API requests. | Globe rendering, mapping, or browser interaction is wrong. |
+| `frontend/src/app.js` | Three.js terrain, resource scenery, human figures, labels, click selection, inspector, event drops, and API requests. | Terrain rendering, mapping, or browser interaction is wrong. |
 | `frontend/src/styles.css` | Dark responsive styling and glass overlays. | Layout, typography, mobile sizing, or colors look wrong. |
 | `frontend/vite.config.js` | Frontend dev server and proxy from `/api` to FastAPI. | Local frontend API requests fail. |
-| `frontend/public/earth/bluemarble-2048.png` | Bundled equirectangular NASA texture wrapped around the Three.js sphere. | Earth appears untextured or the texture is missing. |
 
 ## Decision and update flow
 
@@ -60,7 +58,7 @@ world rules resolve the action          recorded survival fallback
                 ↓
 events and world state persist in SQLite
                 ↓
-Vite renders the globe, figures, resources, and inspectable life records
+Vite renders the continuous land, figures, resources, and inspectable life records
 ```
 
 The browser is a spectator and never advances biology by animating the display. One backend tick equals one simulated day. During a tick the API may report `processing`; the scene keeps the last confirmed snapshot until a new one arrives. LLM text cannot directly edit world state. The engine validates the action and applies resource, consent, location, and biological rules.
@@ -71,7 +69,7 @@ The browser is a spectator and never advances biology by animating the display. 
 2. Inspect `GET /api/world`; check `global_model`, `running`, `processing`, agent locations, needs, disease, and `last_action`.
 3. Read the retained `events` in the response for `fallback_decision`, rejected actions, hazards, births, deaths, and spectator changes. The UI intentionally has no timeline, but the API preserves these records.
 4. For an action without the expected result, inspect its action event and proposed action. The engine may have moved an agent toward a resource instead of completing the action immediately, or rejected a choice due to age, location, resources, or missing consent.
-5. For an event drop, confirm the pointer ray intersects the visible globe and inspect the resulting event's `x`, `y`, `source`, and affected agent IDs.
+5. For an event drop, confirm the pointer ray intersects the walkable land and inspect the resulting event's `x`, `y`, `source`, and affected agent IDs.
 6. For a visual mismatch, compare the API payload to `frontend/src/app.js`. Run `npm run build --prefix frontend`; Vite reports parse and bundling errors without writing into the backend.
 7. The standalone frontend uses Vite at port 5173. Confirm FastAPI is running at 8000 and that `frontend/vite.config.js` proxies `/api`.
 8. The SQLite snapshot is at `backend/data/world.sqlite3` by default. Preserve local data when debugging; `.gitignore` intentionally excludes it.
@@ -88,4 +86,4 @@ For production, `npm run build --prefix frontend` creates a separate `frontend/d
 - Relationship, disease, mortality, and hazard rules remain prototype simplifications.
 - LLM behavior is limited to each agent's available action schema and the information in its individual observation.
 - A single local SQLite snapshot is persisted. The browser uses polling, not a streaming transport.
-- The world coordinate map covers one early-hominin habitat around East Africa on the textured planet; the NASA image does not make the internal rules planet-wide.
+- The world coordinate map covers one early-hominin habitat shown on a single continuous terrain surface; it is not a planet-wide map.
