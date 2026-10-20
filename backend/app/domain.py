@@ -39,6 +39,9 @@ class EventKind(str, Enum):
     FIGHT = "fight"
     FALLBACK_DECISION = "fallback_decision"
     SIMULATION_ERROR = "simulation_error"
+    WORLD_EXTINCT = "world_extinct"
+    POPULATION_LIMIT = "population_limit"
+    CARE = "care"
 
 
 ActionName = Literal[

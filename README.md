@@ -15,8 +15,10 @@ The spectator does not direct normal daily choices. The world advances on its ow
 1. Every simulated day, the backend advances seasons, weather, resources, biological needs, disease, pregnancy, age, and natural hazards.
 2. Decision-capable living agents get separate private observations. The same configured LLM proposes each agent's bounded action, with that person's own history and current circumstances.
 3. The simulation resolves choices under shared world rules. Agents can forage, drink, move, rest, gather, talk, help, teach, form groups, build, bond, reproduce, fight, and create cultural beliefs.
-4. Need, injury, disease, exposure, conflict, and aging can cause death at any age. Children depend on caregivers and can learn through agent teaching.
-5. The backend persists each world in SQLite. The frontend reads snapshots and displays agents and world objects across the land.
+4. Need, injury, disease, exposure, conflict, childbirth complications, and aging can cause death at any age. Children depend on caregivers and can learn through agent teaching.
+5. Parents share nearby food and water with dependent children as they forage and drink. Shelter reduces weather exposure, while severe hazards can damage buildings, food, and materials.
+6. Population is capped at 128 living agents so local inference and simulation remain tractable. The world records extinction and stops when no one remains.
+7. The backend persists each world and its random stream in SQLite. The frontend reads snapshots and displays agents and world objects across the land.
 
 If Ollama is unavailable or a response is invalid, a recorded survival fallback keeps the prototype moving. That fallback is a rule-based decision, not an LLM response.
 

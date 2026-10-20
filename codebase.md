@@ -24,6 +24,7 @@
         ├── api/routes.py               # HTTP API endpoints
         ├── agent_brain/ollama_client.py# Agent-specific observations and model calls
         ├── simulation/engine.py        # Authoritative biology, ecology, and social rules
+        ├── simulation/rules.py         # Shared age, disease, population, and building constraints
         └── storage/sqlite_store.py     # SQLite snapshot persistence
 ```
 
@@ -35,6 +36,7 @@
 | `backend/app/settings.py` | Ollama URL/model, request timeout, event probabilities, database path, and saved-event limit. | A runtime default or `.env` value is wrong. |
 | `backend/app/agent_brain/ollama_client.py` | Builds private observations and requests bounded structured decisions from Ollama. | Model responses fail validation or agents make unexpected proposals. |
 | `backend/app/simulation/engine.py` | Advances days, resolves proposed actions, needs, disease, hazards, relationships, teaching, reproduction, birth, death, and construction. | A world consequence is missing or inconsistent. |
+| `backend/app/simulation/rules.py` | Shared rules consumed by the engine and Ollama decision filter, including adult age, population cap, diseases, traits, and building costs. | The model proposes something the engine cannot support, or a biological/building limit needs tuning. |
 | `backend/app/api/routes.py` | Health, world controls, model selection, biological adjustments, and spectator events. | API request/response behavior is incorrect. |
 | `backend/app/storage/sqlite_store.py` | Reads and writes the authoritative world snapshot. | State does not persist or migration looks wrong. |
 | `backend/app/main.py` | API-only FastAPI setup, configurable CORS, and engine shutdown. | Backend startup, CORS, or shutdown fails. |
@@ -61,7 +63,9 @@ events and world state persist in SQLite
 Vite renders the continuous land, figures, resources, and inspectable life records
 ```
 
-The browser is a spectator and never advances biology by animating the display. One backend tick equals one simulated day. During a tick the API may report `processing`; the scene keeps the last confirmed snapshot until a new one arrives. LLM text cannot directly edit world state. The engine validates the action and applies resource, consent, location, and biological rules.
+The browser is a spectator and never advances biology by animating the display. One backend tick equals one simulated day. During a tick the API may report `processing`; the scene keeps the last confirmed snapshot until a new one arrives. LLM text cannot directly edit world state. The engine validates the action and applies resource, consent, location, and biological rules. Parents share food and water with nearby dependent children when they forage or drink. Shelters reduce exposure and some storm/flood injury; hazards can damage structures, food, and materials. The SQLite snapshot includes the random stream, so natural events continue consistently after restart.
+
+Living population is capped at 128 to bound local LLM and simulation load. When the last person dies, the engine records world extinction and stops its background loop. A failed decision round is recorded and pauses the simulation so it can be inspected and restarted.
 
 ## Debugging path
 

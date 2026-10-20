@@ -12,16 +12,19 @@ router = APIRouter(prefix="/api")
 
 @router.get("/health")
 async def health() -> dict[str, object]:
-    """Report API, Ollama, and configured-model readiness separately."""
+    """Report Ollama availability and readiness of both default and active models."""
     ollama = OllamaClient()
     models = await ollama.installed_models()
     default_model = settings.ollama_model
-    model_ready = models is not None and default_model in models
+    world = await engine.snapshot()
+    current_model = world.global_model
     return {
         "status": "ok",
         "ollama_available": models is not None,
         "default_model": default_model,
-        "model_ready": model_ready,
+        "default_model_ready": models is not None and default_model in models,
+        "current_model": current_model,
+        "model_ready": models is not None and current_model in models,
         "installed_models": models or [],
     }
 

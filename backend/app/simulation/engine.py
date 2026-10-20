@@ -24,24 +24,14 @@ from app.domain import (
 )
 from app.settings import settings
 from app.storage.sqlite_store import SQLiteWorldStore
-
-
-ADULT_AGE_DAYS = 16 * 365
-PREGNANCY_DAYS = 270
-DISEASES = ("fever", "respiratory illness", "wound infection")
-TRAIT_NAMES = ("curiosity", "cooperation", "aggression", "resilience", "sociability")
-
-# Building costs and minimum technology levels create gradual, resource-bound growth.
-BUILDING_RULES: dict[str, tuple[int, dict[str, int]]] = {
-    "lean_to": (0, {"wood": 2}),
-    "hut": (1, {"wood": 4}),
-    "home": (1, {"wood": 5, "stone": 1}),
-    "communal_house": (2, {"wood": 8, "stone": 3}),
-    "granary": (2, {"wood": 5, "stone": 1}),
-    "farm": (2, {"wood": 6}),
-    "shrine": (2, {"wood": 4, "stone": 2}),
-    "workshop": (3, {"wood": 8, "stone": 4}),
-}
+from app.simulation.rules import (
+    ADULT_AGE_DAYS,
+    BUILDING_RULES,
+    DISEASES,
+    MAX_POPULATION,
+    PREGNANCY_DAYS,
+    TRAIT_NAMES,
+)
 
 
 class SimulationEngine:
@@ -56,11 +46,26 @@ class SimulationEngine:
         self._runner_task: asyncio.Task[None] | None = None
         self._tick_interval_seconds = 3.0
         self.state = self._store.load() or self._new_world(seed=7)
+        saved_random_state = self._store.load_random_state()
+        if saved_random_state is not None:
+            self._random.setstate(self._tuple_tree(saved_random_state))
+        else:
+            # Continue older databases from their world seed; future saves persist the full stream.
+            self._random.seed(self.state.seed)
         # Older snapshots may contain per-person model choices; migrate them to one shared brain.
         if not self.state.global_model:
             self.state.global_model = settings.ollama_model
         for person in self.state.agents:
             person.model = self.state.global_model
+            person.x = min(max(person.x, 0), self.state.width - 1)
+            person.y = min(max(person.y, 0), self.state.height - 1)
+        # Snap pre-existing out-of-bounds material nodes onto the playable map during migration.
+        for resource in self.state.resources:
+            resource.x = min(max(resource.x, 0), self.state.width - 1)
+            resource.y = min(max(resource.y, 0), self.state.height - 1)
+        for structure in self.state.structures:
+            structure.x = min(max(structure.x, 0), self.state.width - 1)
+            structure.y = min(max(structure.y, 0), self.state.height - 1)
         # A server restart restores the world but never silently resumes a background loop.
         self.state.running = False
         self.state.processing = False
@@ -97,8 +102,8 @@ class SimulationEngine:
                 ResourceNode(kind="food", x=10, y=4, quantity=20, capacity=30),
                 ResourceNode(kind="water", x=7, y=3, quantity=35, capacity=45),
                 ResourceNode(kind="wood", x=5, y=7, quantity=24, capacity=30),
-                ResourceNode(kind="wood", x=12, y=6, quantity=24, capacity=30),
-                ResourceNode(kind="stone", x=12, y=2, quantity=15, capacity=20),
+                ResourceNode(kind="wood", x=11, y=6, quantity=24, capacity=30),
+                ResourceNode(kind="stone", x=11, y=2, quantity=15, capacity=20),
             ],
         )
         # The starting pair know one another, but they still choose whether to bond or reproduce.
@@ -123,6 +128,10 @@ class SimulationEngine:
 
     async def start(self, interval_seconds: float = 3.0) -> WorldState:
         async with self._lock:
+            if not any(agent.alive for agent in self.state.agents):
+                self.state.running = False
+                self._save()
+                return self.state.model_copy(deep=True)
             self._tick_interval_seconds = min(max(interval_seconds, 0.5), 60.0)
             self.state.running = True
             if self._runner_task is None or self._runner_task.done():
@@ -148,14 +157,30 @@ class SimulationEngine:
             except Exception as exc:
                 # Keep a failed background tick visible and stop instead of spinning on bad state.
                 async with self._lock:
-                    self.state.running = False
-                    self.state.processing = False
-                    self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR, "The simulation paused after an internal error.", details={"error": str(exc)[:300]})
-                    self._save()
+                    # tick() records the failure; this also covers exceptions before it could do so.
+                    if self.state.processing:
+                        self.state.running = False
+                        self.state.processing = False
+                        self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR, "The simulation paused after an internal error.", details={"error": str(exc)[:300]})
+                        self._save()
                     self._runner_task = None
                 return
 
     async def tick(self) -> WorldState:
+        """Advance one day and leave the world recoverable if a decision round fails."""
+        try:
+            return await self._tick_once()
+        except Exception as exc:
+            async with self._lock:
+                if self.state.processing:
+                    self.state.running = False
+                    self.state.processing = False
+                    self._record(self.state, EventSource.SYSTEM, EventKind.SIMULATION_ERROR,
+                                 "The simulation paused after an internal error.", details={"error": str(exc)[:300]})
+                    self._save()
+            raise
+
+    async def _tick_once(self) -> WorldState:
         # Keep reads and spectator inspection responsive while slow model calls are in flight.
         async with self._tick_lock:
             async with self._lock:
@@ -243,6 +268,13 @@ class SimulationEngine:
                 for agent in world.agents:
                     if agent.alive:
                         self._advance_biology(world, agent)
+
+                # The run loop should stop cleanly when no living agent remains.
+                if not any(agent.alive for agent in world.agents):
+                    world.running = False
+                    if not any(event.kind == EventKind.WORLD_EXTINCT for event in world.events):
+                        self._record(world, EventSource.SYSTEM, EventKind.WORLD_EXTINCT,
+                                     "No living agents remain; this world has ended.")
 
                 world.events = world.events[-settings.max_saved_events :]
                 world.processing = False
@@ -350,6 +382,8 @@ class SimulationEngine:
                 return "Looked for food here but found none."
             food.quantity -= 1
             agent.hunger = max(0, agent.hunger - 42)
+            # Young dependents are fed when a nearby parent finds food for the family.
+            self._share_food_with_dependents(world, agent, food)
             self._remember(agent, "Found food here and ate it.")
             self._learn(agent, "foraging")
             return "Found food and ate."
@@ -359,6 +393,7 @@ class SimulationEngine:
                 return "Looked for water here but found none."
             water.quantity -= 1
             agent.thirst = max(0, agent.thirst - 55)
+            self._share_water_with_dependents(world, agent, water)
             self._remember(agent, "Found water here and drank.")
             self._learn(agent, "finding water")
             return "Found water and drank."
@@ -421,51 +456,22 @@ class SimulationEngine:
             return self._create_belief(world, agent, action)
         return "The action was not supported by this world."
 
-    def _resolve_bond(self, world: WorldState, first: Agent, second: Agent) -> None:
-        if not self._adult(first) or not self._adult(second) or first.id == second.id:
-            self._record_action(world, first, AgentAction(action="bond", target_agent_id=second.id), "A bond could not form at this life stage.")
-            return
-        if self._distance(first, second) > 1:
-            self._record_action(world, first, AgentAction(action="bond", target_agent_id=second.id), "The two people were too far apart.")
-            return
-        previous = (first.bonded_partner_id, second.bonded_partner_id)
-        first.bonded_partner_id = second.id
-        second.bonded_partner_id = first.id
-        self._adjust_relationship(first, second, 10)
-        kind = EventKind.RELATIONSHIP
-        if previous[0] not in (None, second.id) or previous[1] not in (None, first.id):
-            # A new mutual bond can disrupt an existing one; the timeline makes that visible.
-            kind = EventKind.RELATIONSHIP
-        self._record(world, EventSource.AGENT_ACTION, kind, f"{first.name} and {second.name} formed a mutual bond.", [first.id, second.id])
-        self._record_action(world, first, AgentAction(action="bond", target_agent_id=second.id), "A mutual bond formed.")
-        self._record_action(world, second, AgentAction(action="bond", target_agent_id=first.id), "A mutual bond formed.")
-
-    def _resolve_reproduction(self, world: WorldState, first: Agent, second: Agent) -> None:
-        female = first if first.sex == "female" else second if second.sex == "female" else None
-        male = first if first.sex == "male" else second if second.sex == "male" else None
-        if not female or not male or not self._adult(female) or not self._adult(male):
-            result = "Reproduction was not biologically possible for this pair."
-        elif self._distance(female, male) > 1:
-            result = "The two people were too far apart."
-        elif female.pregnancy_days_remaining is not None:
-            result = f"{female.name} is already pregnant."
-        elif min(female.health, male.health) < 35 or max(female.hunger, male.hunger, female.thirst, male.thirst) > 90:
-            result = "Their health or immediate needs made reproduction unsafe."
-        else:
-            female.pregnancy_days_remaining = PREGNANCY_DAYS
-            female.other_parent_id = male.id
-            self._adjust_relationship(female, male, 3)
-            result = f"{female.name} became pregnant; birth is expected in about {PREGNANCY_DAYS} simulated days."
-        self._record(world, EventSource.AGENT_ACTION, EventKind.ACTION, result, [first.id, second.id], {"action": "mutual_reproduction"})
-        self._record_action(world, first, AgentAction(action="reproduce", target_agent_id=second.id), result)
-        self._record_action(world, second, AgentAction(action="reproduce", target_agent_id=first.id), result)
-
     def _advance_biology(self, world: WorldState, agent: Agent) -> None:
         """Advance body state once per simulated day; all ages use the same hazard rules."""
         agent.age_days += 1
-        agent.hunger = min(100, agent.hunger + (0.9 if agent.age_days < 6 * 365 else 1.4))
+        shelter = self._has_shelter(world, agent)
+        exposed = not shelter and world.weather in {"cold", "rain", "wind"}
+        agent.hunger = min(100, agent.hunger + (0.9 if agent.age_days < 6 * 365 else 1.4) + (0.35 if exposed else 0))
         agent.thirst = min(100, agent.thirst + (1.2 if agent.age_days < 6 * 365 else 2.0))
         agent.energy = max(0, agent.energy - (0.5 if agent.age_days < 6 * 365 else 1.0))
+
+        # Shelter protects from exposure, but not from direct hazards or disease.
+        if exposed:
+            agent.energy = max(0, agent.energy - 0.6)
+            if world.weather == "cold":
+                agent.health = max(0, agent.health - (0.4 if agent.age_days < 6 * 365 else 0.7))
+            elif world.weather == "rain" and agent.disease is None and self._random.random() < 0.002:
+                self._infect(world, agent, "respiratory illness", EventSource.NATURAL)
 
         if agent.hunger >= 85:
             agent.health = max(0, agent.health - 2.0)
@@ -492,6 +498,8 @@ class SimulationEngine:
 
         if agent.pregnancy_days_remaining is not None:
             agent.pregnancy_days_remaining -= 1
+            agent.hunger = min(100, agent.hunger + 0.4)
+            agent.thirst = min(100, agent.thirst + 0.3)
             if agent.pregnancy_days_remaining <= 0:
                 self._give_birth(world, agent)
         if agent.age_days > 45 * 365:
@@ -502,12 +510,59 @@ class SimulationEngine:
                 self._record(world, EventSource.NATURAL, EventKind.INJURY, f"{agent.name} suffered an age-related health decline.", [agent.id])
         self._check_death(world, agent, "illness or unmet biological needs")
 
+    def _share_food_with_dependents(self, world: WorldState, parent: Agent, node: ResourceNode) -> None:
+        """Consume one extra gathered unit to reduce hunger for a nearby child."""
+        for child in self._nearby_dependents(world, parent, "hunger"):
+            if node.quantity <= 0:
+                break
+            node.quantity -= 1
+            child.hunger = max(0, child.hunger - 28)
+            self._remember(child, f"{parent.name} shared food with you.")
+            self._record(world, EventSource.AGENT_ACTION, EventKind.CARE,
+                         f"{parent.name} fed {child.name}.", [parent.id, child.id], {"care": "food"})
+
+    def _share_water_with_dependents(self, world: WorldState, parent: Agent, node: ResourceNode) -> None:
+        """Consume one extra drink so nearby children receive basic care."""
+        for child in self._nearby_dependents(world, parent, "thirst"):
+            if node.quantity <= 0:
+                break
+            node.quantity -= 1
+            child.thirst = max(0, child.thirst - 35)
+            self._remember(child, f"{parent.name} shared water with you.")
+            self._record(world, EventSource.AGENT_ACTION, EventKind.CARE,
+                         f"{parent.name} gave water to {child.name}.", [parent.id, child.id], {"care": "water"})
+
+    @staticmethod
+    def _nearby_dependents(world: WorldState, parent: Agent, need: str) -> list[Agent]:
+        child_ids = set(parent.children_ids)
+        needs = {"hunger": lambda child: child.hunger, "thirst": lambda child: child.thirst}
+        need_value = needs[need]
+        return sorted(
+            (child for child in world.agents if child.alive and child.id in child_ids
+             and child.age_days < ADULT_AGE_DAYS
+             and SimulationEngine._distance(parent, child) <= 1 and need_value(child) >= 25),
+            key=need_value,
+            reverse=True,
+        )
+
     def _give_birth(self, world: WorldState, mother: Agent) -> None:
         father = self._get_agent(mother.other_parent_id) if mother.other_parent_id else None
         if not mother.alive:
             mother.pregnancy_days_remaining = None
             return
+        if sum(person.alive for person in world.agents) >= MAX_POPULATION:
+            mother.pregnancy_days_remaining = None
+            mother.other_parent_id = None
+            self._record(world, EventSource.SYSTEM, EventKind.POPULATION_LIMIT, "A birth did not occur because the world reached its population limit.", [mother.id], {"population_limit": MAX_POPULATION})
+            return
         father = father if father and father.alive else None
+        complicated_birth = bool(
+            mother.health < 45 or mother.disease is not None
+            or self._random.random() < 0.025
+        )
+        if complicated_birth:
+            mother.health = max(0, mother.health - self._random.randint(12, 28))
+            self._check_death(world, mother, "complications during childbirth")
         parents = [mother] + ([father] if father else [])
         inherited: dict[str, float] = {}
         for trait in TRAIT_NAMES:
@@ -522,7 +577,7 @@ class SimulationEngine:
             age_days=0,
             x=mother.x,
             y=mother.y,
-            health=self._random.randint(65, 100),
+            health=self._random.randint(35, 65) if complicated_birth else self._random.randint(65, 100),
             hunger=10,
             thirst=10,
             energy=75,
@@ -541,7 +596,7 @@ class SimulationEngine:
         world.agents.append(child)
         mother.pregnancy_days_remaining = None
         mother.other_parent_id = None
-        self._record(world, EventSource.NATURAL, EventKind.BIRTH, f"{child.name} was born to {', '.join(p.name for p in parents)}.", [child.id, *[p.id for p in parents]], {"sex": sex, "inherited_traits": inherited})
+        self._record(world, EventSource.NATURAL, EventKind.BIRTH, f"{child.name} was born to {', '.join(p.name for p in parents)}.", [child.id, *[p.id for p in parents]], {"sex": sex, "inherited_traits": inherited, "complicated_birth": complicated_birth})
 
     def _advance_environment(self, world: WorldState) -> None:
         # Seasons and weather are lightweight world pressures, not a full climate model.
@@ -693,7 +748,9 @@ class SimulationEngine:
             agent.inventory[name] -= amount
         structure = Structure(
             id=str(uuid4()), kind=kind, x=agent.x, y=agent.y,
-            owner_agent_id=agent.id, built_at_tick=world.tick,
+            owner_agent_id=agent.id,
+            group_id=next((group.id for group in world.groups if agent.id in group.member_ids), None),
+            built_at_tick=world.tick,
         )
         world.structures.append(structure)
         self._learn(agent, f"building:{kind}")
@@ -702,7 +759,11 @@ class SimulationEngine:
         if world.tech_level > old_level:
             self._record(world, EventSource.AGENT_ACTION, EventKind.DISCOVERY, f"The community developed new building knowledge (level {world.tech_level}).", [agent.id])
         if kind == "farm":
-            world.resources.append(ResourceNode(kind="food", x=agent.x, y=agent.y, quantity=12, capacity=24))
+            existing_food = self._resource_at(world, "food", agent.x, agent.y)
+            if existing_food:
+                existing_food.quantity = min(existing_food.capacity, existing_food.quantity + 12)
+            else:
+                world.resources.append(ResourceNode(kind="food", x=agent.x, y=agent.y, quantity=12, capacity=24))
         self._record(world, EventSource.AGENT_ACTION, EventKind.CONSTRUCTION, f"{agent.name} built a {kind.replace('_', ' ')}.", [agent.id], {"structure_id": structure.id, "owner_agent_id": agent.id, "cost": cost})
         return f"Built a {kind.replace('_', ' ')}."
 
@@ -714,6 +775,13 @@ class SimulationEngine:
             self._record_action(world, first, AgentAction(action="bond", target_agent_id=second.id), "The two people were too far apart.")
             return
         prior_partners = (first.bonded_partner_id, second.bonded_partner_id)
+        for person, new_partner in ((first, second), (second, first)):
+            old_partner = next((agent for agent in world.agents if agent.id == person.bonded_partner_id), None)
+            if old_partner and old_partner.id != new_partner.id:
+                old_partner.bonded_partner_id = None
+                self._adjust_relationship(person, old_partner, -15)
+                self._record(world, EventSource.AGENT_ACTION, EventKind.RELATIONSHIP,
+                             f"{person.name} ended a previous bond with {old_partner.name}.", [person.id, old_partner.id])
         first.bonded_partner_id = second.id
         second.bonded_partner_id = first.id
         self._adjust_relationship(first, second, 10)
@@ -731,6 +799,8 @@ class SimulationEngine:
             result = "The two people were too far apart."
         elif female.pregnancy_days_remaining is not None:
             result = f"{female.name} is already pregnant."
+        elif sum(person.alive for person in world.agents) >= MAX_POPULATION:
+            result = f"The world has reached its population limit of {MAX_POPULATION}."
         elif min(female.health, male.health) < 35 or max(female.hunger, male.hunger, female.thirst, male.thirst) > 90:
             result = "Their health or immediate needs made reproduction unsafe."
         else:
@@ -827,13 +897,15 @@ class SimulationEngine:
                 # Model hazard strength as a radial force with a softer edge.
                 falloff = max(0.18, 1 - (distance / radius) * 0.78)
                 impact = max(1, round(damage * falloff))
+                if hazard in {"storm", "flood"} and self._has_shelter(world, agent):
+                    impact = max(1, round(impact * 0.45))
                 agent.health = max(0, agent.health - impact)
                 affected.append(agent.id)
                 self._check_death(world, agent, hazard, source)
         return affected
 
     def _apply_hazard_to_resources(self, world: WorldState, x: int, y: int, radius: float, hazard: str) -> None:
-        """Spread environmental damage to nearby food and building materials."""
+        """Spread environmental damage to nearby food, materials, and buildings."""
         for node in world.resources:
             distance = self._distance_to(node.x, node.y, x, y)
             if distance > radius:
@@ -845,11 +917,39 @@ class SimulationEngine:
                 node.quantity = max(0, node.quantity - math.ceil(node.quantity * falloff * 0.65))
             elif hazard == "flood" and node.kind in {"food", "wood"}:
                 node.quantity = max(0, node.quantity - math.ceil(node.quantity * falloff * 0.35))
+        for structure in world.structures:
+            distance = self._distance_to(structure.x, structure.y, x, y)
+            if distance > radius:
+                continue
+            falloff = max(0.12, 1 - distance / radius)
+            vulnerability = 0.7 if structure.kind in {"lean_to", "hut"} else 0.4
+            if hazard in {"wildfire", "storm", "flood"}:
+                structure.condition = max(0, structure.condition - 100 * falloff * vulnerability)
+
+    @staticmethod
+    def _has_shelter(world: WorldState, agent: Agent) -> bool:
+        """A nearby usable roof protects from exposure and some weather damage."""
+        protective_kinds = {"lean_to", "hut", "home", "communal_house"}
+        return any(
+            structure.kind in protective_kinds
+            and structure.condition >= 20
+            and SimulationEngine._distance_to(agent.x, agent.y, structure.x, structure.y) <= 1.5
+            for structure in world.structures
+        )
 
     def _check_death(self, world: WorldState, agent: Agent, cause: str, source: EventSource = EventSource.NATURAL) -> None:
         if agent.alive and agent.health <= 0:
             agent.alive = False
             self._record(world, source, EventKind.DEATH, f"{agent.name} died at age {agent.age_years} from {cause}.", [agent.id], {"age_years": agent.age_years, "cause": cause})
+            # Keep a group's leadership attached to living members after a death.
+            for group in world.groups:
+                if group.leader_agent_id == agent.id:
+                    candidates = [member for member in world.agents if member.alive and member.id in group.member_ids]
+                    if candidates:
+                        group.leader_agent_id = max(
+                            candidates,
+                            key=lambda member: member.traits.get("sociability", 0.5),
+                        ).id
 
     def _get_agent(self, agent_id: str | None) -> Agent:
         agent = next((a for a in self.state.agents if a.id == agent_id), None)
@@ -952,7 +1052,14 @@ class SimulationEngine:
         world.events.append(WorldEvent(id=str(uuid4()), tick=world.tick, source=source, kind=kind, message=message, agent_ids=agent_ids or [], details=details or {}))
 
     def _save(self) -> None:
-        self._store.save(self.state)
+        self._store.save(self.state, self._random.getstate())
+
+    @staticmethod
+    def _tuple_tree(value: object) -> object:
+        """Restore tuple nesting lost when Python's PRNG state passes through JSON."""
+        if isinstance(value, list):
+            return tuple(SimulationEngine._tuple_tree(item) for item in value)
+        return value
 
 
 engine = SimulationEngine()
