@@ -85,6 +85,8 @@ const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0, 0);
 controls.enableDamping = true;
 controls.dampingFactor = 0.075;
+controls.enableZoom = true;
+controls.zoomSpeed = 0.8;
 controls.enablePan = true;
 controls.panSpeed = 0.45;
 controls.minDistance = 11;
@@ -303,7 +305,8 @@ function createTerrain(nextWorld = null) {
   const biomeTexture = new THREE.CanvasTexture(canvas);
   biomeTexture.colorSpace = THREE.SRGBColorSpace;
   biomeTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const material = new THREE.MeshStandardMaterial({ map: biomeTexture, color: 0xffffff, roughness: 0.96, metalness: 0.01 });
+  // Use an unlit biome texture so terrain cannot disappear when local night lighting is weak.
+  const material = new THREE.MeshBasicMaterial({ map: biomeTexture, color: 0xffffff });
   terrainMesh = new THREE.Mesh(geometry, material);
   terrainMesh.receiveShadow = true;
   terrainMesh.userData.isLand = true;
@@ -501,6 +504,8 @@ function resizeScene() {
   renderer.setSize(width, height, false);
   camera.aspect = width / height;
   camera.updateProjectionMatrix();
+  camera.updateMatrixWorld(true);
+  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
 }
 new ResizeObserver(resizeScene).observe(host);
 resizeScene();
@@ -615,6 +620,9 @@ function renderLabels() {
 function frame(now) {
   requestAnimationFrame(frame);
   controls.update();
+  // Labels and picking use the same current camera transform as the rendered frame.
+  camera.updateMatrixWorld(true);
+  camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
   for (const figure of peopleMeshes.values()) {
     const destination = figure.userData.destination;
     if (!destination) continue;
@@ -662,6 +670,10 @@ function updateDaylight() {
   skyLight.intensity = 1.0 + daylight * 0.75;
   const angle = ((hour - 6) / 24) * Math.PI * 2;
   sunlight.position.set(Math.cos(angle) * 18, Math.max(1, Math.sin(((hour - 6) / 12) * Math.PI) * 20), Math.sin(angle) * 18);
+  // Keep the unlit terrain readable while still giving it a subtle local-clock night tint.
+  if (terrainMesh?.material?.color) {
+    terrainMesh.material.color.setRGB(0.78 + daylight * 0.22, 0.83 + daylight * 0.17, 0.9 + daylight * 0.1);
+  }
 }
 
 function statBar(name, value, lowIsBad = false) {
