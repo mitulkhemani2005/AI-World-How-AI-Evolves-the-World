@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#05070b" />
-    <meta name="description" content="Observe an autonomous generational life simulation on a continuous 3D landscape." />
+    <meta name="description" content="Observe an autonomous generational life simulation on a fictional spherical world." />
     <title>Origin — AI World</title>
   </head>
   <body>
@@ -20,10 +20,10 @@
         </div>
       </header>
 
-      <section class="world-stage" aria-label="Interactive 3D land simulation">
-        <div class="world-caption"><span class="eyebrow">THE HABITAT · 01</span><h1>Life finds a way.</h1><p id="world-summary">Two lives. One land. No human guidance.</p></div>
-        <div id="world-scene" class="world-scene" aria-label="Drag to orbit the land, scroll to zoom, click a person to inspect"></div>
-        <div class="world-hint"><span>DRAG TO ORBIT</span><i></i><span>SCROLL TO ZOOM</span></div>
+      <section class="world-stage" aria-label="Interactive 3D globe simulation">
+        <div class="world-caption"><span class="eyebrow">A FICTIONAL LIVING WORLD</span><h1>Life finds a way.</h1><p id="world-summary">Two lives. One world. No human guidance.</p></div>
+        <div id="world-scene" class="world-scene" aria-label="Drag to orbit the fictional globe, scroll to zoom, click a person to inspect"></div>
+        <div class="world-hint"><span>DRAG TO ORBIT THE GLOBE</span><i></i><span>SCROLL TO ZOOM</span></div>
 
         <aside class="world-hud" aria-label="World conditions">
           <div class="hud-stat"><strong id="population-label">—</strong><span>ALIVE</span></div>
@@ -32,8 +32,15 @@
           <button id="culture-button" class="text-button">CULTURE <span id="culture-count">0</span></button>
         </aside>
 
+        <aside class="biome-legend" aria-label="World terrain types">
+          <span><i class="biome-ocean"></i>Ocean</span><span><i class="biome-grass"></i>Grassland</span>
+          <span><i class="biome-farm"></i>Farmland</span><span><i class="biome-forest"></i>Forest</span>
+          <span><i class="biome-mountain"></i>Mountains</span><span><i class="biome-desert"></i>Desert</span>
+          <span><i class="biome-ice"></i>Ice</span><span><i class="biome-river"></i>Rivers & lakes</span>
+        </aside>
+
         <aside id="event-tools" class="event-tools" aria-label="World event tools">
-          <div class="tool-heading"><span class="eyebrow">WORLD EVENTS</span><span class="drag-tip">DRAG TO LAND</span></div>
+          <div class="tool-heading"><span class="eyebrow">WORLD EVENTS</span><span class="drag-tip">DRAG TO GLOBE</span></div>
           <div class="event-list">
             <button class="event-tool" draggable="true" data-event="wildfire"><i class="event-icon fire">◉</i><span>Wildfire</span></button>
             <button class="event-tool" draggable="true" data-event="storm"><i class="event-icon storm">⌁</i><span>Storm</span></button>

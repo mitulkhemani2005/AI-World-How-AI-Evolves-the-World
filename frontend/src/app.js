@@ -7,11 +7,9 @@ const $ = (selector) => document.querySelector(selector);
 const host = $("#world-scene");
 const apiBase = import.meta.env.VITE_API_BASE_URL || "";
 const ui = { clock: $("#clock-label"), model: $("#model-select"), run: $("#run-button"), step: $("#step-button"), inspector: $("#agent-inspector"), toast: $("#toast") };
-const worldWidth = 12;
-const worldHeight = 8;
-const spacing = 1.55;
-const landWidth = (worldWidth + 4) * spacing;
-const landDepth = (worldHeight + 4) * spacing;
+const worldWidth = 36;
+const worldHeight = 18;
+const globeRadius = 10;
 let world = null;
 let selectedAgentId = null;
 let currentWorldId = null;
@@ -52,7 +50,7 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x070b0c);
 scene.fog = new THREE.Fog(0x070b0c, 28, 68);
 const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 120);
-camera.position.set(0, 17, 22);
+camera.position.set(0, 13, 30);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0, 0);
 controls.enableDamping = true;
@@ -61,7 +59,7 @@ controls.enablePan = true;
 controls.panSpeed = 0.45;
 controls.minDistance = 11;
 controls.maxDistance = 40;
-controls.maxPolarAngle = Math.PI * 0.48;
+controls.maxPolarAngle = Math.PI;
 
 scene.add(new THREE.HemisphereLight(0xd8e0d5, 0x1b261e, 1.65));
 const sunlight = new THREE.DirectionalLight(0xffe3bf, 2.5);
@@ -78,77 +76,128 @@ const terrainGroup = new THREE.Group(); scene.add(terrainGroup);
 const peopleGroup = new THREE.Group(); scene.add(peopleGroup);
 const resourceGroup = new THREE.Group(); scene.add(resourceGroup);
 const structureGroup = new THREE.Group(); scene.add(structureGroup);
+const animalGroup = new THREE.Group(); scene.add(animalGroup);
+const cropGroup = new THREE.Group(); scene.add(cropGroup);
 const labels = new Map();
 const peopleMeshes = new Map();
 const sceneObjects = new Map();
 const raycaster = new THREE.Raycaster();
 const pointer = new THREE.Vector2();
 let terrainMesh = null;
+let terrainWorldId = null;
+let terrainCells = new Map();
 let pointerDown = null;
 
-function terrainHeight(x, z) {
-  // Broad soft hills and a shallow valley keep the terrain walkable and easy to read.
-  const ridgeA = Math.sin(x * 0.145 + 0.5) * Math.cos(z * 0.205 - 0.25);
-  const ridgeB = Math.sin(z * 0.39 + x * 0.17) * 0.22;
-  const basin = -0.35 * Math.exp(-((x - 1.0) ** 2 + (z + 1.4) ** 2) / 28);
-  return ridgeA * 0.72 + ridgeB + basin;
+function terrainAt(x, y) {
+  return terrainCells.get(((x + worldWidth) % worldWidth) + ":" + THREE.MathUtils.clamp(y, 0, worldHeight - 1));
 }
 
-function worldToScene(x, z) {
-  const sx = (x - (worldWidth - 1) / 2) * spacing;
-  const sz = (z - (worldHeight - 1) / 2) * spacing;
-  return new THREE.Vector3(sx, terrainHeight(sx, sz), sz);
+function surfaceRadius(cell) {
+  if (!cell || cell.kind === "ocean") return globeRadius - 0.08;
+  if (cell.kind === "mountain") return globeRadius + 0.55 + Math.max(0, cell.elevation || 0) * 0.65;
+  if (cell.kind === "ice") return globeRadius + 0.09;
+  return globeRadius + 0.08 + Math.max(0, cell.elevation || 0) * 0.18;
+}
+
+function worldToScene(x, y, extraHeight = 0) {
+  const longitude = ((x + 0.5) / worldWidth) * Math.PI * 2 - Math.PI;
+  const latitude = Math.PI / 2 - ((y + 0.5) / worldHeight) * Math.PI;
+  const cell = terrainAt(x, y);
+  const radius = surfaceRadius(cell) + extraHeight;
+  return new THREE.Vector3(
+    radius * Math.cos(latitude) * Math.sin(longitude),
+    radius * Math.sin(latitude),
+    radius * Math.cos(latitude) * Math.cos(longitude),
+  );
+}
+
+function orientOnGlobe(group, x, y, extraHeight = 0) {
+  const position = worldToScene(x, y, extraHeight);
+  const normal = position.clone().normalize();
+  group.position.copy(position);
+  group.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), normal);
 }
 
 function sceneToWorld(point) {
+  const normal = point.clone().normalize();
+  const longitude = Math.atan2(normal.x, normal.z);
+  const latitude = Math.asin(THREE.MathUtils.clamp(normal.y, -1, 1));
   return {
-    x: THREE.MathUtils.clamp(Math.round(point.x / spacing + (worldWidth - 1) / 2), 0, worldWidth - 1),
-    y: THREE.MathUtils.clamp(Math.round(point.z / spacing + (worldHeight - 1) / 2), 0, worldHeight - 1),
+    x: (Math.floor(((longitude + Math.PI) / (Math.PI * 2)) * worldWidth) + worldWidth) % worldWidth,
+    y: THREE.MathUtils.clamp(Math.floor(((Math.PI / 2 - latitude) / Math.PI) * worldHeight), 0, worldHeight - 1),
   };
 }
 
-function createTerrain() {
-  const geometry = new THREE.PlaneGeometry(landWidth, landDepth, 140, 112);
-  geometry.rotateX(-Math.PI / 2);
-  const positions = geometry.attributes.position;
-  const colors = [];
-  const meadow = new THREE.Color("#435c40");
-  const lowland = new THREE.Color("#536347");
-  const upland = new THREE.Color("#77745b");
-  for (let index = 0; index < positions.count; index += 1) {
-    const x = positions.getX(index); const z = positions.getZ(index);
-    const height = terrainHeight(x, z);
-    positions.setY(index, height);
-    let color = meadow.clone().lerp(lowland, THREE.MathUtils.smoothstep(height, -0.4, 0.22));
-    if (height > 0.38) color.lerp(upland, THREE.MathUtils.clamp((height - 0.38) * 0.72, 0, 0.5));
-    const mottling = 0.96 + 0.04 * Math.sin(index * 0.37 + x * 0.8 + z * 0.5);
-    color.multiplyScalar(mottling);
-    colors.push(color.r, color.g, color.b);
+function createTerrain(nextWorld = null) {
+  // This globe is procedural and fictional; no Earth imagery or geographic map is used.
+  if (terrainMesh) {
+    terrainMesh.geometry.dispose();
+    terrainMesh.material.map?.dispose();
+    terrainMesh.material.dispose();
+    terrainGroup.remove(terrainMesh);
   }
-  geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
-  geometry.computeVertexNormals();
-  terrainMesh = new THREE.Mesh(geometry, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.98, metalness: 0 }));
+  for (const child of [...terrainGroup.children]) {
+    if (child.userData.isAtmosphere) {
+      child.geometry.dispose(); child.material.dispose(); terrainGroup.remove(child);
+    }
+  }
+  const geometry = new THREE.SphereGeometry(globeRadius, 192, 128);
+  const positions = geometry.attributes.position;
+  if (nextWorld?.terrain?.length) {
+    terrainCells = new Map(nextWorld.terrain.map((cell) => [cell.x + ":" + cell.y, cell]));
+    const vertex = new THREE.Vector3();
+    for (let index = 0; index < positions.count; index += 1) {
+      vertex.fromBufferAttribute(positions, index).normalize();
+      const longitude = Math.atan2(vertex.x, vertex.z);
+      const latitude = Math.asin(THREE.MathUtils.clamp(vertex.y, -1, 1));
+      const x = Math.floor(((longitude + Math.PI) / (Math.PI * 2)) * worldWidth) % worldWidth;
+      const y = THREE.MathUtils.clamp(Math.floor(((Math.PI / 2 - latitude) / Math.PI) * worldHeight), 0, worldHeight - 1);
+      const cell = terrainAt(x, y);
+      const radius = surfaceRadius(cell);
+      positions.setXYZ(index, vertex.x * radius, vertex.y * radius, vertex.z * radius);
+    }
+    geometry.computeVertexNormals();
+  }
+
+  const canvas = document.createElement("canvas");
+  canvas.width = 1024; canvas.height = 512;
+  const context = canvas.getContext("2d");
+  const colors = {
+    ocean: "#123c5a", plains: "#b3a06d", grassland: "#819452", farmland: "#a9945e",
+    forest: "#355b42", rainforest: "#246348", boreal_forest: "#55715b",
+    mountain: "#777c78", desert: "#c5a16b", ice: "#c7d9dc", river: "#267b89", lake: "#286b83",
+  };
+  context.fillStyle = colors.ocean; context.fillRect(0, 0, canvas.width, canvas.height);
+  if (nextWorld?.terrain?.length) {
+    const cellWidth = canvas.width / worldWidth; const cellHeight = canvas.height / worldHeight;
+    for (const cell of nextWorld.terrain) {
+      context.fillStyle = colors[cell.kind] || colors.plains;
+      context.fillRect(cell.x * cellWidth, cell.y * cellHeight, Math.ceil(cellWidth + 1), Math.ceil(cellHeight + 1));
+    }
+    // Gentle texture variation keeps the globe natural while retaining clear biome colors.
+    context.fillStyle = "rgba(225,225,210,0.035)";
+    for (let x = 0; x < canvas.width; x += 5) {
+      const y = (Math.sin(x * 0.045) * 0.5 + 0.5) * canvas.height;
+      context.fillRect(x, y, 2, 2);
+    }
+  }
+  const biomeTexture = new THREE.CanvasTexture(canvas);
+  biomeTexture.colorSpace = THREE.SRGBColorSpace;
+  biomeTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+  const material = new THREE.MeshStandardMaterial({ map: biomeTexture, color: 0xd8ded1, roughness: 0.96, metalness: 0.01 });
+  terrainMesh = new THREE.Mesh(geometry, material);
   terrainMesh.receiveShadow = true;
   terrainMesh.userData.isLand = true;
   terrainGroup.add(terrainMesh);
 
-  // A thin dark soil edge grounds the landscape without drawing a grid or map tiles.
-  const soil = new THREE.Mesh(new THREE.BoxGeometry(landWidth, 0.55, landDepth), new THREE.MeshStandardMaterial({ color: 0x25291f, roughness: 1 }));
-  soil.position.y = -0.57;
-  soil.receiveShadow = true;
-  terrainGroup.add(soil);
-
-  // Small natural pools give water resources a visible landmark in the habitat.
-  const waterMaterial = new THREE.MeshStandardMaterial({ color: 0x397984, roughness: 0.27, metalness: 0.08, transparent: true, opacity: 0.89 });
-  for (const [x, z, width, depth] of [[2, 3, 2.2, 0.72], [9, 2, 1.8, 0.62], [6, 7, 1.45, 0.52]]) {
-    const point = worldToScene(x, z);
-    const pool = new THREE.Mesh(new THREE.CircleGeometry(1, 42), waterMaterial);
-    pool.rotation.x = -Math.PI / 2;
-    pool.scale.set(width, depth, 1);
-    pool.position.set(point.x, point.y + 0.025, point.z);
-    pool.receiveShadow = true;
-    terrainGroup.add(pool);
-  }
+  // A subtle atmospheric rim distinguishes the spherical world from its dark backdrop.
+  const atmosphere = new THREE.Mesh(
+    new THREE.SphereGeometry(globeRadius + 0.16, 96, 64),
+    new THREE.MeshBasicMaterial({ color: 0x628c9c, transparent: true, opacity: 0.075, side: THREE.BackSide }),
+  );
+  atmosphere.userData.isAtmosphere = true;
+  terrainGroup.add(atmosphere);
+  terrainWorldId = nextWorld?.id || null;
 }
 
 function addTree(x, z, scale = 1) {
@@ -159,21 +208,18 @@ function addTree(x, z, scale = 1) {
   foliage.position.y = 1.03; foliage.scale.set(0.91, 1.2, 0.88);
   group.add(trunk, foliage);
   group.scale.setScalar(scale);
-  const point = worldToScene(x, z);
-  group.position.copy(point);
+  orientOnGlobe(group, x, z);
   group.traverse((part) => { if (part.isMesh) { part.castShadow = true; part.receiveShadow = true; } });
   resourceGroup.add(group);
 }
 
 function seedScenery() {
-  // Fixed-seed scenery makes a saved world look consistent after a browser refresh.
+  // Seed forest scenery from the saved biome map; this stays consistent across refreshes.
   let seed = 31;
   const random = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296; };
-  const clearings = [[3, 4], [4, 4], [2, 5], [10, 4], [7, 3], [5, 7], [12, 6], [12, 2]];
-  for (let count = 0; count < 62; count += 1) {
-    const x = random() * (worldWidth - 1); const z = random() * (worldHeight - 1);
-    if (clearings.some(([cx, cz]) => Math.hypot(cx - x, cz - z) < 0.85)) continue;
-    addTree(x, z, 0.72 + random() * 0.62);
+  const woodland = world?.terrain?.filter((cell) => ["forest", "rainforest", "boreal_forest"].includes(cell.kind)) || [];
+  for (const cell of woodland) {
+    if (random() < 0.5) addTree(cell.x, cell.y, 0.48 + random() * 0.32);
   }
 }
 
@@ -216,16 +262,55 @@ function makeHumanoid(agent) {
   return root;
 }
 
+function makeAnimal(animal) {
+  // Compact articulated animal models are attached to the globe's local surface normal.
+  const root = new THREE.Group();
+  root.userData.animalId = animal.id;
+  const furColors = { deer: 0x9a754f, antelope: 0xa48254, goat: 0xc1b59b, boar: 0x5f5147, chicken: 0xc58c55, hare: 0x9c9585, dog: 0x95745d, small_game: 0x837557 };
+  const fur = new THREE.MeshStandardMaterial({ color: furColors[animal.species] || 0x95816c, roughness: 1 });
+  const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.25, 3, 6), fur);
+  body.rotation.z = Math.PI / 2; body.position.y = 0.31;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.09, 9, 7), fur);
+  head.position.set(0, 0.34, 0.22);
+  root.add(body, head);
+  for (const side of [-1, 1]) for (const forward of [-1, 1]) {
+    const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.03, 0.2, 5), fur);
+    leg.position.set(side * 0.07, 0.13, forward * 0.11);
+    root.add(leg);
+  }
+  root.scale.setScalar(["small_game", "hare", "chicken"].includes(animal.species) ? 0.72 : 1);
+  root.traverse((part) => { if (part.isMesh) { part.castShadow = true; part.userData.animalId = animal.id; } });
+  animalGroup.add(root);
+  sceneObjects.set("animal-" + animal.id, root);
+  return root;
+}
+
+function createCrop(plot) {
+  const group = new THREE.Group();
+  group.userData.cropId = plot.id;
+  orientOnGlobe(group, plot.x, plot.y, 0.015);
+  const soil = new THREE.Mesh(new THREE.CircleGeometry(0.28, 12), new THREE.MeshStandardMaterial({ color: 0x5d5035, roughness: 1 }));
+  soil.rotation.x = -Math.PI / 2; soil.position.y = 0.02; group.add(soil);
+  const leaves = new THREE.MeshStandardMaterial({ color: plot.condition < 30 ? 0x806c46 : plot.crop_kind === "fruit" ? 0x6c9b52 : 0x9cae52, roughness: 0.9 });
+  for (let index = 0; index < 4; index += 1) {
+    const stem = new THREE.Mesh(new THREE.ConeGeometry(0.045, 0.24 + Math.min(0.15, plot.growth_days / 100), 5), leaves);
+    const angle = index * Math.PI / 2;
+    stem.position.set(Math.cos(angle) * 0.12, 0.15, Math.sin(angle) * 0.12);
+    group.add(stem);
+  }
+  group.traverse((part) => { if (part.isMesh) part.castShadow = true; });
+  cropGroup.add(group); sceneObjects.set("crop-" + plot.id, group);
+}
+
 function createResource(node) {
   const group = new THREE.Group();
-  const point = worldToScene(node.x, node.y);
-  group.position.copy(point);
+  orientOnGlobe(group, node.x, node.y);
   const size = Math.max(0.5, Math.min(1.2, node.quantity / 18));
-  if (node.kind === "food") {
-    const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.25 * size, 1), new THREE.MeshStandardMaterial({ color: 0x759856, roughness: 1, flatShading: true }));
+  if (["food", "fruit", "vegetable"].includes(node.kind)) {
+    const bush = new THREE.Mesh(new THREE.IcosahedronGeometry(0.25 * size, 1), new THREE.MeshStandardMaterial({ color: node.kind === "vegetable" ? 0x91a955 : 0x759856, roughness: 1, flatShading: true }));
     bush.position.y = 0.2; group.add(bush);
     for (let berry = 0; berry < 3; berry += 1) {
-      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.055, 7, 6), new THREE.MeshStandardMaterial({ color: 0xc97a57 }));
+      const fruit = new THREE.Mesh(new THREE.SphereGeometry(0.055, 7, 6), new THREE.MeshStandardMaterial({ color: node.kind === "vegetable" ? 0xa2ae62 : 0xc97a57 }));
       fruit.position.set((berry - 1) * 0.12, 0.28 + (berry % 2) * 0.07, 0.14); group.add(fruit);
     }
   } else if (node.kind === "wood") {
@@ -234,8 +319,10 @@ function createResource(node) {
     const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(0.38 * size, 1), new THREE.MeshStandardMaterial({ color: 0x4f6846, roughness: 1, flatShading: true }));
     crown.position.y = 0.72; group.add(crown);
   } else {
+    const edible = ["meat", "cooked_meat", "eggs", "milk"].includes(node.kind);
     const geometry = node.kind === "water" ? new THREE.CylinderGeometry(0.38, 0.48, 0.055, 20) : new THREE.DodecahedronGeometry(0.25 * size, 0);
-    const material = new THREE.MeshStandardMaterial({ color: node.kind === "water" ? 0x4c8794 : 0x929590, roughness: 0.8, transparent: node.kind === "water", opacity: 0.84, flatShading: true });
+    const edibleColors = { meat: 0x9a5148, cooked_meat: 0x9c704b, eggs: 0xe0d4aa, milk: 0xc7d3ca };
+    const material = new THREE.MeshStandardMaterial({ color: node.kind === "water" ? (node.contamination > 15 ? 0x795766 : 0x4c8794) : edible ? edibleColors[node.kind] : 0x929590, roughness: 0.8, transparent: node.kind === "water", opacity: 0.84, flatShading: true });
     const marker = new THREE.Mesh(geometry, material); marker.position.y = node.kind === "water" ? 0.04 : 0.2; group.add(marker);
   }
   group.traverse((part) => { if (part.isMesh) { part.castShadow = true; part.receiveShadow = true; } });
@@ -247,10 +334,14 @@ function createStructure(building) {
   const group = new THREE.Group();
   const wood = new THREE.MeshStandardMaterial({ color: 0x947652, roughness: 1 });
   const roof = new THREE.MeshStandardMaterial({ color: 0x534a3d, roughness: 1, flatShading: true });
-  const pos = worldToScene(building.x, building.y);
-  group.position.copy(pos);
+  orientOnGlobe(group, building.x, building.y);
   const scale = building.kind === "communal_house" ? 1.14 : 0.8;
-  if (building.kind === "farm") {
+  if (building.kind === "campfire") {
+    const stones = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.08, 5, 12), new THREE.MeshStandardMaterial({ color: 0x77716a, roughness: 1 }));
+    stones.rotation.x = Math.PI / 2; stones.position.y = 0.08;
+    const flame = new THREE.Mesh(new THREE.ConeGeometry(0.13, 0.36, 6), new THREE.MeshStandardMaterial({ color: 0xd88943, emissive: 0x9a4014, emissiveIntensity: 0.5 }));
+    flame.position.y = 0.26; group.add(stones, flame);
+  } else if (building.kind === "farm") {
     const plot = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.1, 0.86), new THREE.MeshStandardMaterial({ color: 0x564832, roughness: 1 }));
     plot.position.y = 0.06; group.add(plot);
     const crops = new THREE.MeshStandardMaterial({ color: 0x86a55b, roughness: 1 });
@@ -290,18 +381,22 @@ new ResizeObserver(resizeScene).observe(host);
 resizeScene();
 
 function syncObjects(nextWorld) {
+  if (terrainWorldId !== nextWorld.id) createTerrain(nextWorld);
   if (currentWorldId !== nextWorld.id) {
     currentWorldId = nextWorld.id; selectedAgentId = null;
     for (const label of labels.values()) label.remove();
     labels.clear(); peopleMeshes.clear(); sceneObjects.clear();
-    peopleGroup.clear(); resourceGroup.clear(); structureGroup.clear();
+    peopleGroup.clear(); resourceGroup.clear(); structureGroup.clear(); animalGroup.clear(); cropGroup.clear();
     seedScenery();
   }
   const liveIds = new Set(nextWorld.agents.map((agent) => agent.id));
   for (const [id, label] of labels) if (!liveIds.has(id)) { label.remove(); labels.delete(id); peopleMeshes.delete(id); }
   for (const agent of nextWorld.agents) {
     let figure = peopleMeshes.get(agent.id);
-    if (!figure) figure = makeHumanoid(agent);
+    if (!figure) {
+      figure = makeHumanoid(agent);
+      orientOnGlobe(figure, agent.x, agent.y);
+    }
     const destination = worldToScene(agent.x, agent.y);
     figure.userData.destination = destination;
     figure.userData.moving = agent.last_action?.action === "move" && agent.alive;
@@ -324,8 +419,26 @@ function syncObjects(nextWorld) {
     const key = `structure-${building.id}`; desiredStructures.add(key);
     if (!sceneObjects.has(key)) createStructure(building);
   }
+  const desiredAnimals = new Set();
+  for (const animal of nextWorld.animals || []) {
+    if (!animal.alive) continue;
+    const key = "animal-" + animal.id; desiredAnimals.add(key);
+    let animalFigure = sceneObjects.get(key);
+    if (!animalFigure) animalFigure = makeAnimal(animal);
+    animalFigure.userData.destination = worldToScene(animal.x, animal.y, 0.02);
+    animalFigure.userData.animalType = animal.animal_type;
+    animalFigure.userData.owner = animal.owner_agent_id;
+  }
+  const desiredCrops = new Set();
+  for (const plot of nextWorld.crops || []) {
+    const key = "crop-" + plot.id; desiredCrops.add(key);
+    if (!sceneObjects.has(key)) createCrop(plot);
+  }
   for (const [key, object] of sceneObjects) {
-    if ((key.startsWith("resource-") && !desiredResources.has(key)) || (key.startsWith("structure-") && !desiredStructures.has(key))) {
+    if ((key.startsWith("resource-") && !desiredResources.has(key))
+      || (key.startsWith("structure-") && !desiredStructures.has(key))
+      || (key.startsWith("animal-") && !desiredAnimals.has(key))
+      || (key.startsWith("crop-") && !desiredCrops.has(key))) {
       object.removeFromParent(); sceneObjects.delete(key);
     }
   }
@@ -335,11 +448,12 @@ function renderLabels() {
   const projected = new THREE.Vector3();
   for (const [id, figure] of peopleMeshes) {
     const label = labels.get(id);
-    projected.copy(figure.position).add(new THREE.Vector3(0, 1.5, 0)).project(camera);
+    projected.copy(figure.position).add(figure.position.clone().normalize().multiplyScalar(1.5)).project(camera);
     const x = (projected.x * 0.5 + 0.5) * host.clientWidth;
     const y = (-projected.y * 0.5 + 0.5) * host.clientHeight;
     label.style.transform = `translate(${x}px,${y}px) translate(-50%,-100%)`;
-    label.style.display = projected.z < 1 && figure.position.clone().sub(camera.position).length() < 55 ? "block" : "none";
+    const frontFacing = figure.position.dot(camera.position) > 0;
+    label.style.display = frontFacing && projected.z < 1 && figure.position.clone().sub(camera.position).length() < 55 ? "block" : "none";
   }
 }
 
@@ -349,13 +463,21 @@ function frame(now) {
   for (const figure of peopleMeshes.values()) {
     const destination = figure.userData.destination;
     if (!destination) continue;
-    figure.position.x = THREE.MathUtils.damp(figure.position.x, destination.x, 3.2, 1 / 60);
-    figure.position.z = THREE.MathUtils.damp(figure.position.z, destination.z, 3.2, 1 / 60);
-    figure.position.y = terrainHeight(figure.position.x, figure.position.z);
+    const blend = 1 - Math.exp(-3.2 / 60);
+    const nextPosition = figure.position.clone().lerp(destination, blend).normalize();
+    const nextRadius = THREE.MathUtils.damp(figure.position.length(), destination.length(), 3.2, 1 / 60);
+    figure.position.copy(nextPosition.multiplyScalar(nextRadius));
+    figure.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), figure.position.clone().normalize()), blend);
     const moving = figure.userData.moving && figure.position.distanceTo(destination) > 0.13;
     figure.userData.limbs.forEach((limb) => { limb.rotation.x = moving ? Math.sin(now * 0.007 + limb.userData.swingPhase) * 0.48 : THREE.MathUtils.damp(limb.rotation.x, 0, 5, 1 / 60); });
-    if (moving) figure.rotation.y = Math.atan2(destination.x - figure.position.x, destination.z - figure.position.z);
+    if (moving) figure.rotation.y += Math.sin(now * 0.001) * 0.002;
     figure.userData.selectionRing.rotation.z = now * 0.00045;
+  }
+  for (const [key, animal] of sceneObjects) {
+    if (!key.startsWith("animal-") || !animal.userData.destination) continue;
+    const alpha = 1 - Math.exp(-2.2 / 60);
+    animal.position.lerp(animal.userData.destination, alpha).normalize().multiplyScalar(globeRadius + 0.3);
+    animal.quaternion.slerp(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), animal.position.clone().normalize()), alpha);
   }
   renderLabels();
   renderer.render(scene, camera);
@@ -386,6 +508,11 @@ function renderInspector() {
     <form class="edit-form" id="edit-agent"><div class="edit-title">SPECTATOR ADJUSTMENT</div><div class="edit-grid">${["health", "hunger", "thirst", "energy"].map((key) => `<div class="edit-field"><label for="edit-${key}">${key}</label><input id="edit-${key}" name="${key}" type="number" min="0" max="100" value="${Math.round(agent[key])}" ${agent.alive ? "" : "disabled"}/></div>`).join("")}</div><button class="small-action" type="submit" ${agent.alive ? "" : "disabled"}>Apply changes</button></form>
     <div class="detail-list"><div class="detail-line"><span>Parents</span><span>${escapeHtml(namesFor(agent.parent_ids || []))}</span></div><div class="detail-line"><span>Children</span><span>${escapeHtml(namesFor(agent.children_ids || []))}</span></div><div class="detail-line"><span>Bond</span><span>${escapeHtml(partner?.name || "None")}</span></div><div class="detail-line"><span>Pregnancy</span><span>${agent.pregnancy_days_remaining == null ? "No" : `${agent.pregnancy_days_remaining} days`}</span></div><div class="detail-line"><span>Knowledge</span><span>${(agent.knowledge || []).length} learned</span></div><div class="detail-line"><span>Temperament</span><span>${escapeHtml(traits)}</span></div><div class="detail-line"><span>Last action</span><span>${escapeHtml(agent.last_action?.action?.replaceAll("_", " ") || "Observing")}</span></div></div>
     <ul class="memories">${memories.length ? memories.map((memory) => `<li>${escapeHtml(memory)}</li>`).join("") : "<li>No memories yet.</li>"}</ul></div>`;
+  const biome = terrainAt(agent.x, agent.y);
+  const habitat = document.createElement("div");
+  habitat.className = "habitat-line";
+  habitat.textContent = "Habitat · " + (biome?.kind?.replaceAll("_", " ") || "unknown");
+  ui.inspector.querySelector(".condition")?.after(habitat);
   ui.inspector.querySelector(".close-inspector").addEventListener("click", () => { selectedAgentId = null; renderInspector(); syncObjects(world); });
   ui.inspector.querySelector("#edit-agent").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -398,20 +525,24 @@ function renderInspector() {
 
 function renderCulture() {
   const structures = world?.structures || []; const groups = world?.groups || []; const beliefs = world?.beliefs || [];
-  $("#culture-count").textContent = String(groups.length + beliefs.length + structures.length);
+  const animals = world?.animals || []; const crops = world?.crops || [];
+  $("#culture-count").textContent = String(groups.length + beliefs.length + structures.length + animals.filter((animal) => animal.animal_type !== "wild").length);
   const block = (title, values) => `<div class="culture-block"><h4>${title} · ${values.length}</h4><div class="chip-list">${values.length ? values.map((value) => `<span class="chip">${escapeHtml(value)}</span>`).join("") : '<span class="chip">None yet</span>'}</div></div>`;
   $("#culture-popover").innerHTML = `<h3>World culture</h3>${block("Structures", structures.map((item) => item.kind.replaceAll("_", " ")))}${block("Groups", groups.map((item) => `${item.name} · ${item.kind} · ${item.member_ids.length}`))}${block("Beliefs", beliefs.map((item) => `${item.name} · ${item.kind}`))}`;
+  $("#culture-popover").insertAdjacentHTML("beforeend", block("Animals", animals.filter((item) => item.alive).map((item) => `${item.species} · ${item.animal_type}${item.owner_agent_id ? " · cared for" : ""}`)) + block("Growing crops", crops.map((item) => `${item.crop_kind} · ${item.growth_days} days · ${Math.round(item.moisture)}% moisture`)));
 }
 
 function renderWorld(next) {
   world = next;
   const year = Math.floor(world.tick / 365) + 1; const day = world.tick % 365 || 365;
   const living = world.agents.filter((agent) => agent.alive).length;
+  const animalCount = (world.animals || []).filter((animal) => animal.alive).length;
   ui.clock.textContent = `YEAR ${year} · DAY ${day}${world.processing ? " · THINKING" : ""}`;
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
   $("#world-summary").textContent = `${living} alive · ${world.agents.length} lives in the world · ${world.season || "spring"}`;
+  $("#world-summary").textContent = [living + " people", animalCount + " animals", (world.crops?.length || 0) + " growing crops", world.season || "spring"].join(" · ");
   ui.run.textContent = world.running ? "Ⅱ" : "▶";
   ui.run.title = world.running ? "Pause the simulation" : "Run the simulation";
   syncObjects(world); renderInspector(); renderCulture();
@@ -470,8 +601,6 @@ function groundHit(event) {
   castPointer(event);
   const hit = raycaster.intersectObject(terrainMesh, false)[0];
   if (!hit) return null;
-  const limitX = worldWidth * spacing / 2; const limitZ = worldHeight * spacing / 2;
-  if (Math.abs(hit.point.x) > limitX || Math.abs(hit.point.z) > limitZ) return null;
   return hit.point;
 }
 
@@ -480,7 +609,9 @@ renderer.domElement.addEventListener("pointerup", (event) => {
   if (!pointerDown || Math.hypot(event.clientX - pointerDown.x, event.clientY - pointerDown.y) > 5) { pointerDown = null; return; }
   castPointer(event);
   const hits = raycaster.intersectObjects(peopleGroup.children, true);
-  const agentId = hits.map((hit) => hit.object.userData.agentId || hit.object.parent?.userData.agentId).find(Boolean);
+  const globeHit = raycaster.intersectObject(terrainMesh, false)[0];
+  const visibleHits = hits.filter((hit) => !globeHit || hit.distance < globeHit.distance);
+  const agentId = visibleHits.map((hit) => hit.object.userData.agentId || hit.object.parent?.userData.agentId).find(Boolean);
   if (agentId) { selectedAgentId = agentId; renderInspector(); syncObjects(world); }
   pointerDown = null;
 });

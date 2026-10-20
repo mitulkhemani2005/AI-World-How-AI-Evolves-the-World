@@ -42,6 +42,9 @@ class EventKind(str, Enum):
     WORLD_EXTINCT = "world_extinct"
     POPULATION_LIMIT = "population_limit"
     CARE = "care"
+    FOODBORNE_ILLNESS = "foodborne_illness"
+    ANIMAL_BIRTH = "animal_birth"
+    ANIMAL_DISEASE = "animal_disease"
 
 
 ActionName = Literal[
@@ -53,6 +56,14 @@ ActionName = Literal[
     "help",
     "teach",
     "gather",
+    "hunt",
+    "tame",
+    "tend_animal",
+    "collect_animal_food",
+    "plant",
+    "water_crop",
+    "harvest",
+    "cook",
     "build",
     "bond",
     "reproduce",
@@ -71,9 +82,11 @@ class AgentAction(BaseModel):
     dy: int = Field(default=0, ge=-1, le=1)
     target_agent_id: str | None = None
     target_group_id: str | None = None
+    target_animal_id: str | None = None
     message: str = Field(default="", max_length=240)
     structure_type: str | None = None
     resource_kind: Literal["wood", "stone"] | None = None
+    crop_kind: Literal["fruit", "vegetable"] | None = None
     group_type: Literal["community", "family", "gang"] = "community"
     belief_name: str = Field(default="", max_length=80)
     belief_type: Literal["deity", "myth", "virtue", "evil", "taboo"] | None = None
@@ -83,11 +96,57 @@ class AgentAction(BaseModel):
 class ResourceNode(BaseModel):
     """A renewable or finite resource at a map coordinate."""
 
-    kind: Literal["food", "water", "wood", "stone"]
+    kind: Literal["food", "fruit", "vegetable", "meat", "cooked_meat", "eggs", "milk", "water", "wood", "stone"]
     x: int
     y: int
     quantity: int = Field(ge=0)
     capacity: int = Field(ge=0)
+    contamination: float = Field(default=0, ge=0, le=100)
+    days_old: int = Field(default=0, ge=0)
+
+
+class TerrainCell(BaseModel):
+    """A fictional globe coordinate with a biome and climate profile."""
+
+    x: int
+    y: int
+    kind: Literal["ocean", "plains", "grassland", "farmland", "forest", "rainforest", "boreal_forest", "mountain", "desert", "ice", "river", "lake"]
+    elevation: float = Field(default=0, ge=-1, le=1)
+    moisture: float = Field(default=0.5, ge=0, le=1)
+    temperature: float = Field(default=0.5, ge=0, le=1)
+
+
+class Animal(BaseModel):
+    """An individual wild animal, domestic animal, or companion pet."""
+
+    id: str
+    species: str
+    animal_type: Literal["wild", "domestic", "pet"] = "wild"
+    sex: Literal["male", "female"]
+    age_days: int = Field(default=0, ge=0)
+    x: int
+    y: int
+    health: float = Field(default=100, ge=0, le=100)
+    hunger: float = Field(default=15, ge=0, le=100)
+    thirst: float = Field(default=15, ge=0, le=100)
+    alive: bool = True
+    disease: str | None = None
+    owner_agent_id: str | None = None
+    temperament: float = Field(default=0.5, ge=0, le=1)
+
+
+class CropPlot(BaseModel):
+    """A planted food crop that grows through simulated days and seasons."""
+
+    id: str
+    crop_kind: Literal["fruit", "vegetable"]
+    x: int
+    y: int
+    planted_by: str
+    planted_tick: int
+    growth_days: int = 0
+    moisture: float = Field(default=60, ge=0, le=100)
+    condition: float = Field(default=100, ge=0, le=100)
 
 
 class Agent(BaseModel):
@@ -129,7 +188,7 @@ class Structure(BaseModel):
     """A physical place with an owner and condition."""
 
     id: str
-    kind: Literal["lean_to", "hut", "home", "communal_house", "granary", "farm", "workshop", "shrine"]
+    kind: Literal["lean_to", "hut", "home", "communal_house", "granary", "farm", "workshop", "shrine", "campfire"]
     x: int
     y: int
     owner_agent_id: str | None = None
@@ -182,6 +241,9 @@ class WorldState(BaseModel):
     height: int = 8
     agents: list[Agent]
     resources: list[ResourceNode]
+    terrain: list[TerrainCell] = Field(default_factory=list)
+    animals: list[Animal] = Field(default_factory=list)
+    crops: list[CropPlot] = Field(default_factory=list)
     structures: list[Structure] = Field(default_factory=list)
     groups: list[SocialGroup] = Field(default_factory=list)
     beliefs: list[CulturalBelief] = Field(default_factory=list)

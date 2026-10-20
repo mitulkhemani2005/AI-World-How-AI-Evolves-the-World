@@ -1,6 +1,6 @@
 # AI World: How AI Evolves the World
 
-AI World is an experimental generational life simulation. Two independent AI minds begin in an early hominin world and make choices about survival, relationships, learning, conflict, and culture. A FastAPI backend owns biology and world rules; a separate Three.js frontend lets the spectator watch their lives unfold in a continuous, tile-free 3D land habitat.
+AI World is an experimental generational life simulation. Two independent AI minds begin in an early hominin world and make choices about survival, relationships, learning, conflict, and culture. A FastAPI backend owns biology and world rules; a separate Three.js frontend lets the spectator watch their lives unfold across a procedural, fictional 3D globe.
 
 > **Status:** Local playable prototype. It explores a fictional simulation design; it is not a scientific reconstruction of hominin evolution or a prediction of human history.
 
@@ -12,22 +12,24 @@ The spectator does not direct normal daily choices. The world advances on its ow
 
 ## What the simulation models
 
-1. Every simulated day, the backend advances seasons, weather, resources, biological needs, disease, pregnancy, age, and natural hazards.
+1. Every simulated day, the backend advances seasons, weather, resources, biological needs, disease, pregnancy, age, animal lives, crops, and natural hazards. The spherical world has oceans, rivers, lakes, mountains, grasslands, farmland, deserts, ice, and several forest biomes.
 2. Decision-capable living agents get separate private observations. The same configured LLM proposes each agent's bounded action, with that person's own history and current circumstances.
-3. The simulation resolves choices under shared world rules. Agents can forage, drink, move, rest, gather, talk, help, teach, form groups, build, bond, reproduce, fight, and create cultural beliefs.
-4. Need, injury, disease, exposure, conflict, childbirth complications, and aging can cause death at any age. Children depend on caregivers and can learn through agent teaching.
-5. Parents share nearby food and water with dependent children as they forage and drink. Shelter reduces weather exposure, while severe hazards can damage buildings, food, and materials.
-6. Population is capped at 128 living agents so local inference and simulation remain tractable. The world records extinction and stops when no one remains.
-7. The backend persists each world and its random stream in SQLite. The frontend reads snapshots and displays agents and world objects across the land.
+3. The simulation resolves choices under shared world rules. Agents can forage, drink, hunt, tame, care for animals, gather, farm, cook, talk, teach, form groups, build, bond, reproduce, fight, and create cultural beliefs.
+4. Wild animals move, eat, drink, reproduce, and die. Agents can tame domestic species or companions, provide care, collect eggs and milk, or hunt wildlife. Edible plants regrow in suitable biomes.
+5. Farm plots need a farm, knowledge, suitable soil, water, and time. Harvests can fail through drought, fire, or neglect. Raw meat, spoiled food, and contaminated water can cause foodborne or waterborne disease.
+6. Need, injury, disease, exposure, conflict, childbirth complications, and aging can cause death at any age. Children depend on caregivers and can learn through agent teaching.
+7. Parents share nearby food and water with dependent children. Shelter reduces weather exposure, while severe hazards can damage buildings, crops, wildlife, food, and water.
+8. Population is capped at 128 living agents so local inference and simulation remain tractable. The world records extinction and stops when no one remains.
+9. The backend persists each world and its random stream in SQLite. The frontend reads snapshots and displays agents and world objects on the fictional globe.
 
 If Ollama is unavailable or a response is invalid, a recorded survival fallback keeps the prototype moving. That fallback is a rule-based decision, not an LLM response.
 
 ## Spectator experience
 
-- See a dark, orbitable 3D landscape with human figures, resources, trees, and buildings. The land is one continuous terrain surface, with no map tiles or planet-sized globe. Drag to orbit, scroll to zoom, and click a figure to open that person's life record.
+- See a dark, orbitable procedural globe with human figures, wild and domesticated animals, growing crops, resources, forests, and buildings. Its fictional continents are generated from simulation rules and do not copy real Earth geography or satellite imagery. Drag to orbit, scroll to zoom, and click a figure to open that person's life record.
 - Review age, health, hunger, thirst, energy, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
 - Select one installed Ollama model for the whole world. Each agent still has an independent identity and private history.
-- Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the land. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
+- Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
 - Run, pause, advance one day, or reset the world. The minimalist spectator does not use a name roster or a visible timeline.
 - Inspect the world API and its retained event records for debugging and provenance.
 

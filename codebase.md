@@ -13,7 +13,7 @@
 │   ├── vite.config.js                  # Dev server and FastAPI /api proxy
 │   ├── package.json / package-lock.json# Three.js and Vite dependencies
 │   └── src/
-│       ├── app.js                      # Continuous terrain, human figures, API UI
+│       ├── app.js                      # Procedural globe, biomes, figures, ecology, and API UI
 │       └── styles.css                  # Dark, responsive spectator interface
 └── backend/
     ├── requirements.txt                # FastAPI, Uvicorn, and HTTPX dependencies
@@ -27,6 +27,8 @@
         ├── simulation/rules.py         # Shared age, disease, population, and building constraints
         └── storage/sqlite_store.py     # SQLite snapshot persistence
 ```
+
+The saved world stores a procedural terrain cell for every longitude/latitude coordinate, plus agents, animals, crop plots, resources, structures, and cultural state. The backend is authoritative for all movement, ecology, disease, and event consequences. The frontend wraps those coordinates onto a spherical globe and only renders the resulting snapshot.
 
 ## File responsibilities
 
@@ -87,7 +89,7 @@ For production, `npm run build --prefix frontend` creates a separate `frontend/d
 ## Current limits
 
 - This is a small illustrative simulation, not a scientific reconstruction of millions of years of hominin evolution.
-- Relationship, disease, mortality, and hazard rules remain prototype simplifications.
+- Biome, animal, crop, disease, mortality, and hazard rules remain prototype simplifications.
 - LLM behavior is limited to each agent's available action schema and the information in its individual observation.
 - A single local SQLite snapshot is persisted. The browser uses polling, not a streaming transport.
-- The world coordinate map covers one early-hominin habitat shown on a single continuous terrain surface; it is not a planet-wide map.
+- The 36×18 world is a compact spherical abstraction with fictional geography, not a scientific map of Earth or a reconstruction of millions of years of evolution.

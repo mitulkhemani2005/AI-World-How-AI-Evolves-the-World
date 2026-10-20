@@ -42,10 +42,13 @@ Agents are embodied living beings, not just text-generating minds. The simulatio
 - Disease exposure, symptoms, immune response, and possible immunity.
 - Reproductive health, pregnancy, birth, and childcare where modeled.
 - Inherited traits that may affect appearance, abilities, or susceptibility.
+- Shelter exposure and the protection provided by maintained shelters.
+- Food safety, contamination, spoilage, parasites, and illness from raw or unsafe food and water.
+- Animal health, hunger, thirst, disease, domestication, reproduction, and the human-animal relationship.
 
 Birth and death can occur at any age. Death may result from illness, injury, starvation, dehydration, childbirth, violence, environmental exposure, or other modeled causes. A death affects dependents, relationships, group capacity, and the future transmission of knowledge.
 
-Diseases can arise and spread through agents or the environment. They can differ in transmission and severity, and agents may or may not understand what causes them. Care practices and disease knowledge can develop culturally over time. The simulation should record the likely cause and chain of events behind illness and death so the spectator can inspect them.
+Diseases can arise and spread through agents, animals, food, water, or the environment. Raw meat, spoiled foods, polluted water, and animal disease can create distinct risks. Diseases can differ in transmission and severity, and agents may or may not understand what causes them. Care practices and disease knowledge can develop culturally over time. The simulation should record the likely cause and chain of events behind illness and death so the spectator can inspect them.
 
 ## Family, inheritance, and teaching
 
@@ -55,7 +58,11 @@ Parents and other community members can teach through demonstration, communicati
 
 ## Environment and events
 
-The world provides resources and changing conditions, including food, water, shelter, terrain, weather, seasons, and ecological risks. Agents may forage, make shelters, cooperate to obtain resources, or adapt their behavior to the environment.
+The world provides resources and changing conditions, including food, water, shelter, terrain, weather, seasons, wildlife, and ecological risks. Its fictional globe is generated procedurally rather than copied from Earth: oceans surround several invented landmasses with rivers, lakes, fertile farmland, plains, grassland, mountains, deserts, ice caps, temperate forests, tropical rainforests, and boreal forests.
+
+Agents need to find or make shelter for protection. They can forage fruit and vegetables, hunt wildlife, and learn animal care. Wild animals move, feed, become ill, reproduce, and die. Agents may tame suitable animals into domestic livestock or companions, feed and water them, and collect products such as eggs or milk.
+
+Food sources are biome-dependent. Farm plots require a built farm, suitable soil, water, and time to grow. Crops can fail during drought, fire, flooding, poor soil, or neglect. Raw meat, spoiled food, and contaminated water can cause illness; cooking meat at a campfire reduces some foodborne risk.
 
 Events have two sources:
 
@@ -82,8 +89,9 @@ The human is primarily an observer. The simulation runs autonomously after its r
 
 The separate dark-themed frontend should let the spectator:
 
-- Orbit and zoom around a continuous 3D land habitat with hills, water, trees, and visible human figures. Do not render a globe or a tiled map.
-- Click a human figure directly on the land to inspect needs, health, memories, relationships, lineage, and current action. Do not require selecting agents from a name roster.
+- Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
+- See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
+- Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
 - Adjust selected biological stats through that person's inspector, with changes applied by simulation rules.
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.
