@@ -1,79 +1,114 @@
 # AI World: How AI Evolves the World
 
-AI World is an experimental, generational life simulation. Two independent minds begin in a rugged early-hominin habitat and make choices about survival, relationships, learning, conflict, and culture. A FastAPI server owns the world rules; Ollama supplies each person's decision using one shared model and that person's private memories, traits, and observations.
+AI World is an experimental generational life simulation. Two independent AI minds begin in an early hominin world and make choices about survival, relationships, learning, conflict, and culture. A FastAPI backend owns biology and world rules; a separate Three.js frontend lets the spectator watch their lives unfold on a NASA Blue Marble Earth.
 
-The spectator watches through a dark 3D landscape. People walk between resources and structures; selecting a person opens their life and editable biological stats. A world-wide model selector changes the brain used by everyone. Natural events can occur without intervention, and the spectator may drag hazards onto the land and see distance-based consequences.
+> **Status:** Local playable prototype. It explores a fictional simulation design; it is not a scientific reconstruction of hominin evolution or a prediction of human history.
 
-> **Status:** Local playable prototype. This is an exploration of a simulation design, not a scientific reconstruction of hominin evolution or a prediction of real human history.
+## The idea
 
-## What happens in a world
+Two agents start the world: one male and one female. Both use the same spectator-selected local Ollama model, while keeping distinct memories, traits, relationships, and observations. They need to find food and water, rest, respond to illness and danger, communicate, form relationships, and decide whether to have and care for children. As generations grow, they may teach, build homes and property, form groups, fight, create beliefs, or disappear.
 
-1. A world starts with two adults, one male and one female, and a shared local Ollama model (`gemma4:e2b` by default).
-2. On each simulated day, the backend advances weather, ecology, resources, disease risk, and natural hazards.
-3. Each living person from age three receives a private observation. The same configured model proposes a bounded action for each decision-capable person. Their memories, learned knowledge, relationships, age, needs, and traits differ, so their decisions can differ too; infants remain dependent on caregivers.
-4. The available action schema is narrowed to choices that fit the person's current needs and surroundings. If they choose a visible resource that is nearby but not underfoot, the engine advances them one step toward it and records both the model's proposal and the resolved movement.
-5. The simulation applies world rules. People can forage, drink, move, rest, gather, communicate, help, teach, form groups, bond, reproduce, fight, build, and create cultural beliefs.
-6. Biology advances: hunger, thirst, energy, disease, immunity, pregnancy, birth, inherited traits, aging, injury, and death all affect the population.
-7. The API saves the world in SQLite. The 3D client visualizes the authoritative state and its timeline.
+The spectator does not direct normal daily choices. The world advances on its own once started. A spectator can still change the shared model, inspect and adjust an individual's biology, or drag an event onto the globe. Disasters and diseases can also happen through simulation rules without intervention.
 
-When Ollama cannot decide or returns an invalid action, a survival fallback is recorded in the timeline. The fallback keeps the world advancing, but it is not a language-model decision.
+## What the simulation models
 
-## Spectator controls
+1. Every simulated day, the backend advances seasons, weather, resources, biological needs, disease, pregnancy, age, and natural hazards.
+2. Decision-capable living agents get separate private observations. The same configured LLM proposes each agent's bounded action, with that person's own history and current circumstances.
+3. The simulation resolves choices under shared world rules. Agents can forage, drink, move, rest, gather, talk, help, teach, form groups, build, bond, reproduce, fight, and create cultural beliefs.
+4. Need, injury, disease, exposure, conflict, and aging can cause death at any age. Children depend on caregivers and can learn through agent teaching.
+5. The backend persists each world in SQLite. The frontend reads snapshots and displays agents and world objects on the globe.
 
-- Orbit and zoom around the continuous, terrain-shaped 3D land. The scene has no visible map tiles.
-- Watch individual low-poly human figures animate as they move between world coordinates.
-- Select a person to review their health, hunger, thirst, energy, age, disease, family, relationships, knowledge, traits, and recent memories.
-- Adjust a living person's health, hunger, thirst, or energy. The server records the intervention and immediately applies death rules when health reaches zero.
-- Choose one installed Ollama model for the whole world. Every current person and every newborn then uses that model; their personal memories and traits remain separate.
-- Drag wildfire, storm, flood, drought, disease outbreak, or mishap from the event palette onto the land. World effects use a circular footprint with distance falloff. Events may also occur naturally.
-- Run, pause, step, speed up, or reset the simulation. Inspect births, deaths, choices, teaching, diseases, conflicts, construction, culture, and spectator interventions in the timeline.
+If Ollama is unavailable or a response is invalid, a recorded survival fallback keeps the prototype moving. That fallback is a rule-based decision, not an LLM response.
+
+## Spectator experience
+
+- See a dark, orbitable 3D Earth with human figures, resources, and buildings. Drag to rotate, scroll to zoom, and click a figure to open that person's life record.
+- Review age, health, hunger, thirst, energy, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
+- Select one installed Ollama model for the whole world. Each agent still has an independent identity and private history.
+- Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto the globe. The simulation applies its geographic consequences; equivalent natural events can occur without the spectator.
+- Run, pause, advance one day, or reset the world. The minimalist spectator does not use a name roster or a visible timeline.
+- Inspect the world API and its retained event records for debugging and provenance.
+
+## Technology
+
+- **Frontend:** Vite, Three.js, native HTML/CSS/JavaScript. It is a separate application, not rendered by FastAPI.
+- **Backend:** Python, FastAPI, Pydantic, HTTPX.
+- **Decision model:** Ollama, default model `gemma4:e2b`, shared across agents.
+- **Persistence:** SQLite world snapshots.
+- **Earth imagery:** NASA/Goddard Space Flight Center Scientific Visualization Studio, [Blue Marble seamless Earth mosaic](https://svs.gsfc.nasa.gov/2915/). The image is bundled locally in `frontend/public/earth/`, so the running globe does not need to fetch its texture from a third-party host.
 
 ## Local setup
 
-Requirements: Python 3.11 or newer, Node.js 20 or newer, and [Ollama](https://ollama.com/) with `gemma4:e2b` installed. Ollama is optional for the server to run; without it, the simulation uses its visible fallback policy.
+Requirements: Python 3.11 or newer, Node.js 20 or newer, and Ollama. The backend can also run without Ollama using its visible survival fallback.
+
+### 1. Install the model
 
 ```powershell
 ollama pull gemma4:e2b
-python -m pip install -r backend/requirements.txt
-npm ci --prefix frontend
-npm run build --prefix frontend
-python -m uvicorn app.main:app --app-dir backend --reload
 ```
 
-Open [http://127.0.0.1:8000](http://127.0.0.1:8000) for the spectator and [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs) for the API documentation. Build the bundled Three.js frontend again after editing `frontend/app.js`:
+### 2. Install dependencies
+
+```powershell
+python -m pip install -r backend/requirements.txt
+npm ci --prefix frontend
+```
+
+### 3. Start the FastAPI backend
+
+From the repository root:
+
+```powershell
+python -m uvicorn app.main:app --app-dir backend --reload --port 8000
+```
+
+The API and interactive documentation are at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). FastAPI exposes the API only; it does not serve or build the spectator page.
+
+### 4. Start the independent frontend
+
+In a second terminal:
+
+```powershell
+npm run dev --prefix frontend
+```
+
+Open [http://localhost:5173](http://localhost:5173). Vite serves the UI and proxies `/api` requests to the backend on port 8000.
+
+### Production frontend build
 
 ```powershell
 npm run build --prefix frontend
+npm run preview --prefix frontend
 ```
 
-The generated bundle is `backend/app/static/app.bundle.js`, so the served scene does not need a browser CDN connection. The default world snapshot is `backend/data/world.sqlite3`; it is local and ignored by Git. A `.env.example` file documents the Ollama URL/model, timeout, natural event probabilities, and database path.
+Vite writes static production assets to `frontend/dist/`. Host those assets separately from FastAPI and set `VITE_API_BASE_URL` to the FastAPI base URL when building (for example, `https://api.example.com`). Set `FRONTEND_ORIGINS` to the frontend origin or comma-separated list of origins in the backend deployment. The Vite development server and preview server proxy `/api` locally and do not need that change.
 
 ## API overview
 
-- `GET /api/health` — FastAPI and Ollama/model availability.
-- `GET /api/models` — installed local Ollama models.
-- `GET /api/world` — current authoritative world snapshot.
+- `GET /api/health` — API, Ollama, and configured model readiness.
+- `GET /api/models` — installed local models.
+- `GET /api/world` — authoritative world snapshot, including retained event records.
 - `POST /api/world/tick` — advance one simulated day and collect agent decisions.
-- `POST /api/world/run?interval_seconds=3` / `POST /api/world/pause` — control the continuous simulation loop.
-- `POST /api/world/reset?seed=7` — create and save a fresh world.
-- `PATCH /api/world/model` — set one model for all agents.
-- `PATCH /api/agents/{agent_id}/state` — apply a spectator adjustment to biological stats.
-- `POST /api/events` — place a spectator event at a world coordinate or person.
+- `POST /api/world/run?interval_seconds=3` / `POST /api/world/pause` — start or stop autonomous simulation.
+- `POST /api/world/reset?seed=7` — start a fresh world.
+- `PATCH /api/world/model` — switch all agents to one shared model.
+- `PATCH /api/agents/{agent_id}/state` — adjust an individual's health, hunger, thirst, or energy.
+- `POST /api/events` — apply a geographically bounded spectator event.
 
 ## Repository map
 
-- [idea.md](idea.md) — product theme, simulation premise, biology, society, and spectator role.
-- [codebase.md](codebase.md) — file-level implementation and debugging guide.
-- `backend/app/simulation/engine.py` — authoritative biology, hazards, action resolution, and social rules.
-- `backend/app/agent_brain/ollama_client.py` — private observations and structured model decisions.
-- `backend/app/static/` — FastAPI-served spectator interface and generated bundle.
-- `frontend/app.js` — Three.js scene, interactions, and API-backed UI.
-- `frontend/build.mjs` — bundles Three.js and the spectator script for local/offline serving.
+- [idea.md](idea.md) describes the product theme, agents, biology, culture, and spectator experience.
+- [codebase.md](codebase.md) maps files to responsibilities and gives a debugging path.
+- `frontend/src/app.js` contains the globe, human figures, direct selection, inspector, controls, and API calls.
+- `frontend/src/styles.css` defines the minimalist dark interface and responsive overlays.
+- `frontend/index.html` is the independent frontend entry page; `frontend/vite.config.js` configures the dev API proxy.
+- `backend/app/simulation/engine.py` is the authoritative world engine.
+- `backend/app/agent_brain/ollama_client.py` supplies individual observations and structured choices.
 
-## Simulation boundaries
+## Boundaries
 
-One tick is one simulated day. Population growth and technology do not represent six million years of calibrated history; the early-hominin starting point is a thematic premise, and agent rules are simplified assumptions. LLMs suggest actions but do not control physics, biology, consent, or persistence. Natural-event probabilities and disease effects are tunable prototype values, not medical or historical facts.
+One tick is one simulated day. The starting period of 6–7 million years ago is thematic; the current small map, life-stage, disease, and hazard rules are simplified assumptions, not calibrated biology or history. LLMs propose choices but cannot directly mutate physics, consent, biology, or persistence.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The NASA Earth image is separately credited to NASA/Goddard Space Flight Center Scientific Visualization Studio and the Blue Marble data contributors.

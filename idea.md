@@ -80,15 +80,15 @@ Property can be personal, family-held, shared, or group-controlled according to 
 
 The human is primarily an observer. The simulation runs autonomously after its rules and starting conditions are set, while the spectator can optionally intervene.
 
-The dark-themed frontend should let the spectator:
+The separate dark-themed frontend should let the spectator:
 
-- Orbit a continuous 3D landscape, zoom in and out, and follow human figures as they walk.
-- Inspect an agent's needs, health, memories, relationships, lineage, and current action.
+- Orbit and zoom around a 3D Earth rendered from a bundled satellite texture, with human figures placed on the early-hominin habitat.
+- Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, and current action. Do not require selecting agents from a name roster.
 - Adjust selected biological stats through that person's inspector, with changes applied by simulation rules.
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.
-- Review a timeline of births, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters.
-- Pause and change simulation speed.
+- Review world records from the API for births, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters. Keep the main spectator free of a visible timeline.
+- Pause, resume, or advance one day.
 - Change the shared LLM model used by every agent and inspect the resulting changes in their behavior.
 - Drag events onto a location or person, with range and severity determined by the world simulation.
 
