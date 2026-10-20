@@ -49,8 +49,9 @@ host.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0xf4f5f1);
 scene.fog = new THREE.Fog(0xf4f5f1, 34, 82);
-const camera = new THREE.PerspectiveCamera(38, 1, 0.1, 120);
-camera.position.set(0, 10, 24);
+// Leave a margin around the complete sphere so the world is not cropped on first load.
+const camera = new THREE.PerspectiveCamera(48, 1, 0.1, 120);
+camera.position.set(0, 7, 28);
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0, 0);
 controls.enableDamping = true;
@@ -164,9 +165,10 @@ function createTerrain(nextWorld = null) {
   canvas.width = 1024; canvas.height = 512;
   const context = canvas.getContext("2d");
   const colors = {
-    ocean: "#123c5a", plains: "#b3a06d", grassland: "#819452", farmland: "#a9945e",
-    forest: "#355b42", rainforest: "#246348", boreal_forest: "#55715b",
-    mountain: "#777c78", desert: "#c5a16b", ice: "#c7d9dc", river: "#267b89", lake: "#286b83",
+    // Brighter, higher-contrast biomes remain easy to distinguish against the light UI.
+    ocean: "#28658a", plains: "#d0bd82", grassland: "#98ad63", farmland: "#c4ac69",
+    forest: "#4d7654", rainforest: "#347954", boreal_forest: "#66866c",
+    mountain: "#929790", desert: "#d4ad70", ice: "#d9ecee", river: "#398ca0", lake: "#347d9b",
   };
   context.fillStyle = colors.ocean; context.fillRect(0, 0, canvas.width, canvas.height);
   if (nextWorld?.terrain?.length) {
@@ -185,7 +187,7 @@ function createTerrain(nextWorld = null) {
   const biomeTexture = new THREE.CanvasTexture(canvas);
   biomeTexture.colorSpace = THREE.SRGBColorSpace;
   biomeTexture.anisotropy = renderer.capabilities.getMaxAnisotropy();
-  const material = new THREE.MeshStandardMaterial({ map: biomeTexture, color: 0xd8ded1, roughness: 0.96, metalness: 0.01 });
+  const material = new THREE.MeshStandardMaterial({ map: biomeTexture, color: 0xffffff, roughness: 0.96, metalness: 0.01 });
   terrainMesh = new THREE.Mesh(geometry, material);
   terrainMesh.receiveShadow = true;
   terrainMesh.userData.isLand = true;
