@@ -172,6 +172,8 @@ class WorldEvent(BaseModel):
 class WorldState(BaseModel):
     id: str
     seed: int
+    # One world-wide brain model is used by every independent person.
+    global_model: str = "gemma4:e2b"
     tick: int = 0
     width: int = 12
     height: int = 8
@@ -198,6 +200,15 @@ class ModelChange(BaseModel):
         if not value:
             raise ValueError("Model name cannot be empty")
         return value
+
+
+class AgentStateChange(BaseModel):
+    """A spectator may tune visible needs, while the engine owns all consequences."""
+
+    health: float | None = Field(default=None, ge=0, le=100)
+    hunger: float | None = Field(default=None, ge=0, le=100)
+    thirst: float | None = Field(default=None, ge=0, le=100)
+    energy: float | None = Field(default=None, ge=0, le=100)
 
 
 class SpectatorEventRequest(BaseModel):

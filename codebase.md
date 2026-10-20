@@ -1,105 +1,97 @@
-# Codebase Map and Debugging Guide
+# Codebase map and debugging guide
 
-## Current structure
+## Repository layout
 
 ```text
 .
-├── .env.example
-├── .gitignore
-├── README.md
-├── idea.md
-├── codebase.md
-├── LICENSE
+├── README.md                         # Product overview, setup, features, and API
+├── idea.md                           # Theme and desired simulation behavior
+├── codebase.md                       # This file: implementation map and debugging
+├── .env.example                      # Local runtime settings
+├── frontend/
+│   ├── package.json                  # Three.js and esbuild dependencies/scripts
+│   ├── package-lock.json              # Reproducible JavaScript dependency versions
+│   ├── build.mjs                     # Bundles the spectator into FastAPI static files
+│   └── app.js                        # Three.js scene and browser-side interactions
 └── backend/
-    ├── requirements.txt
+    ├── requirements.txt               # FastAPI, Uvicorn, and HTTPX
     └── app/
-        ├── __init__.py
-        ├── main.py
-        ├── settings.py
-        ├── domain.py
-        ├── api/
-        │   ├── __init__.py
-        │   └── routes.py
-        ├── agent_brain/
-        │   ├── __init__.py
-        │   └── ollama_client.py
-        ├── simulation/
-        │   ├── __init__.py
-        │   └── engine.py
-        ├── storage/
-        │   ├── __init__.py
-        │   └── sqlite_store.py
+        ├── main.py                    # FastAPI application and static page serving
+        ├── settings.py                # Environment-backed model and simulation settings
+        ├── domain.py                  # Pydantic world, agent, action, and event schemas
+        ├── api/routes.py              # HTTP API endpoints
+        ├── agent_brain/ollama_client.py # Private observations and shared Ollama model calls
+        ├── simulation/engine.py       # Authoritative world rules and state transitions
+        ├── storage/sqlite_store.py    # SQLite snapshot persistence
         └── static/
-            ├── index.html
-            ├── styles.css
-            └── app.js
+            ├── index.html             # Spectator page structure
+            ├── styles.css             # Dark responsive layout and 3D scene overlays
+            └── app.bundle.js          # Generated Three.js/browser bundle; rebuild from frontend/
 ```
 
-## File responsibilities
+## What owns what
 
-| File | Responsibility | Inspect when… |
+| File | Responsibility | Inspect it when… |
 | --- | --- | --- |
-| `.env.example` | Documents local Ollama and simulation settings without secrets. | A local setting needs to be changed. |
-| `.gitignore` | Excludes Python bytecode, local environment files, and SQLite data. | Generated files appear in Git status. |
-| `README.md` | Product summary, implemented feature list, setup, and API routes. | You need to run or understand the project. |
-| `idea.md` | Full simulation theme, agent, biology, society, and spectator vision. | A feature or behavior needs to match the intended product. |
-| `codebase.md` | This file: implementation map and debugging path. | You need to find which module owns a behavior. |
-| `backend/requirements.txt` | FastAPI, Uvicorn, and HTTPX dependencies. | Dependency installation fails. |
-| `backend/app/main.py` | FastAPI app, local CORS policy, lifespan cleanup, and static frontend serving. | The server fails to start or the page is not served. |
-| `backend/app/settings.py` | Reads Ollama endpoint/model, timeouts, event probabilities, database path, and event-log limit. | A runtime default or environment setting is wrong. |
-| `backend/app/domain.py` | Pydantic agent, resource, world, structure, group, belief, event, and action schemas. | State validation or API serialization is wrong. |
-| `backend/app/api/routes.py` | Health, model list, world tick/run/pause/reset, model assignment, and spectator event endpoints. | An HTTP request or response is wrong. |
-| `backend/app/agent_brain/ollama_client.py` | Builds each agent's observation, checks local models, calls Ollama, and validates structured action output. | A model is unavailable, response parsing fails, or an agent sees incorrect context. |
-| `backend/app/simulation/engine.py` | Authoritative world rules: time, needs, disease, actions, reproduction, teaching, groups, beliefs, buildings, disasters, and mortality. | A world outcome, action, or event source is incorrect. |
-| `backend/app/storage/sqlite_store.py` | Loads and saves the current complete world snapshot in SQLite. | State does not persist or the snapshot cannot be loaded. |
-| `backend/app/static/index.html` | Accessible structure for the spectator dashboard. | A panel or control is missing from the page. |
-| `backend/app/static/styles.css` | Responsive visual design and map layout. | The page layout or readability is wrong. |
-| `backend/app/static/app.js` | Polls the API, renders the map and timeline, and sends spectator commands. | The page displays stale data or a control does not call the API. |
-| `__init__.py` files | Mark Python application modules. | Python import resolution fails. |
+| `backend/app/domain.py` | Agent, world, resource, event, action, and spectator update schemas. `WorldState.global_model` defines the shared model. | API data validation or serialization is wrong. |
+| `backend/app/settings.py` | Ollama URL/model, timeouts, natural-event probabilities, database path, event limit. | A runtime default differs from the expected environment. |
+| `backend/app/agent_brain/ollama_client.py` | Creates bounded, individual agent observations; asks the shared model for structured actions; validates Ollama responses. | A brain chooses poorly, responses time out, or fallback entries appear. |
+| `backend/app/simulation/engine.py` | Advances world time, needs, movement, action effects, teaching, relationships, reproduction, inheritance, disease, death, disasters, and ecology. | A simulated outcome is inconsistent with the prior state or rule. |
+| `backend/app/api/routes.py` | Health, world run/pause/tick/reset, installed models, shared model changes, agent stat edits, and spectator events. | An endpoint returns the wrong status or data. |
+| `backend/app/storage/sqlite_store.py` | Saves/loads the complete world snapshot. | The world does not persist or restored data looks wrong. |
+| `backend/app/main.py` | FastAPI app lifespan and same-origin static file hosting. | Server startup, shutdown, or page delivery fails. |
+| `frontend/app.js` | Three.js land, human figures, scenery, orbit controls, click selection, drag/drop events, stat inspector, and API requests. | A visual interaction or browser request does not work. |
+| `frontend/build.mjs` | Bundles the browser code and Three.js as `/assets/app.bundle.js`. | The served JavaScript is stale or bundling fails. |
+| `backend/app/static/index.html` | Accessible page structure and panel IDs. | A needed control or panel is absent. |
+| `backend/app/static/styles.css` | Dark theme, responsive layout, event palette, inspector, labels, and scene styling. | A layout, color, or small-screen issue appears. |
 
-## Important behavior boundaries
-
-- **Agent brain:** Returns a proposed action from one person's bounded observation. It does not mutate world state.
-- **Simulation engine:** Validates actions and applies biology, resource, relationship, and event consequences.
-- **FastAPI routes:** Validate HTTP input and call the engine; simulation and prompt rules stay out of route handlers.
-- **SQLite store:** Saves the authoritative Pydantic world snapshot. It does not decide outcomes.
-- **Browser UI:** Displays state returned by the backend and sends explicit spectator commands. It does not duplicate simulation rules.
-
-## Main simulation flow
+## Decision and update flow
 
 ```text
-environment and natural events
-        ↓
-each living agent receives a private observation
-        ↓
-Ollama proposes a structured action (or fallback policy acts)
-        ↓
-the engine resolves actions and mutual consent
-        ↓
-biology, disease, pregnancy, and mortality advance
-        ↓
-events and the SQLite snapshot are saved
-        ↓
-the browser refreshes its view
+browser asks FastAPI for the current world
+                  ↓
+simulation advances day, environment, ecology, and natural hazards
+                  ↓
+each living agent gets its own observation and personal memory
+                  ↓
+the shared Ollama model sees a state-specific action schema and proposes an individual action
+      ↓ successful decision                     ↓ Ollama/error response
+validated action proposal                visible survival fallback
+                  ↓
+simulation applies resource, consent, relationship, and biology rules
+  + visible but distant resource choices become one cardinal path step
+                  ↓
+events + SQLite snapshot → FastAPI → animated 3D spectator scene
 ```
 
-One tick represents one simulated day. A running tick does not hold the state lock while a model is generating, so the UI can inspect the world and the spectator can still trigger events. Each event records whether it came from nature, an agent, the spectator, or the system.
+One tick is one simulated day. The model suggests an action; it cannot directly edit world state. Bonding and reproduction require matching independent proposals. Environmental damage uses a circular, distance-scaled footprint, and spectator events are tagged as spectator-sourced. The API does not hold the world state lock while waiting for model inference, so inspection and interventions remain responsive.
 
-## Debugging workflow
+The Ollama adapter disables optional model thinking and limits output length to reduce decision latency. Up to two agents can request decisions concurrently. The action schema omits clearly wasteful or impossible choices (for example, eating when hunger is already low). When a model chooses a visible resource that is nearby but not underfoot, the engine applies one step of movement toward it and records both the proposed and resolved action. If an Ollama call or action validation fails, the engine chooses a basic survival fallback and records the reason in a `fallback_decision` event.
 
-1. Find the first incorrect event in the world timeline.
-2. Read its `source`, `kind`, `agent_ids`, and `details` before changing code.
-3. For a model decision, inspect the agent observation in `agent_brain/ollama_client.py`, the assigned model, and any `fallback_decision` event.
-4. For a world consequence, inspect the corresponding resolver in `simulation/engine.py` and compare its inputs with the prior world state.
-5. For missing persistence, inspect the serialized `WorldState` in `storage/sqlite_store.py` and confirm the configured database path.
-6. For display issues, check the API payload first, then the DOM rendering in `static/app.js`.
+## Debugging checklist
 
-Avoid treating free-form model explanations as the source of truth. The state transition and recorded event are authoritative.
+1. Call `GET /api/health`. Confirm Ollama is reachable and the configured model is installed.
+2. Call `GET /api/world`. Inspect `global_model`, `processing`, living population, each person's `last_action`, needs, and location.
+3. Inspect the event timeline for `fallback_decision`. Its details include the inference/validation failure; without that event, the action came from the model.
+4. If an action was proposed but had no effect, inspect the matching `action` event and its `result`. Check `proposed_action` when the engine resolved a resource choice as movement. The engine may also reject an action for age, resources, or missing consent.
+5. For a spectator event, check the event's `source`, `x`, `y`, `affected`, and nearby agents/resource quantities. The requested center is a world coordinate.
+6. For an incorrect visual, compare the API payload with `frontend/app.js` before editing simulation rules. Check browser console errors and verify `npm run build --prefix frontend` was run after a JS change.
+7. If a restored snapshot appears to have separate models, engine startup migrates each person's model to the snapshot's world-wide `global_model`.
 
-## Current limitations
+Avoid treating free-form model text as proof that an action succeeded. The backend state transition and timeline event are authoritative.
 
-- The world is a lightweight prototype, not a scientific model of millions of years of human evolution.
-- The simulation currently stores one world snapshot in a local SQLite file.
-- Ollama model calls are sequential within each day; a large population will need scheduling and cost controls.
-- Natural event probabilities and biological effects are tunable assumptions, not validated historical or medical data.
-- The frontend uses periodic polling rather than a streaming connection.
+## Local development notes
+
+- Install JavaScript dependencies with `npm ci --prefix frontend` and regenerate the static bundle with `npm run build --prefix frontend`.
+- Start the server with `python -m uvicorn app.main:app --app-dir backend --reload`.
+- The SQLite world lives at `backend/data/world.sqlite3` unless `AI_WORLD_DATABASE` overrides it. Do not remove or reset it while debugging another copy of the app.
+- The installed UI bundle is generated output; edit `frontend/app.js` rather than editing compressed `app.bundle.js` directly.
+- Each current and newborn agent receives `world.global_model`. Memories, observations, traits, relationships, and knowledge remain individual.
+
+## Current limits
+
+- This is a small illustrative world, not a biological or historical reconstruction of the full 6–7 million years since early hominins.
+- Ollama choices are constrained to the action schema; social behavior is emergent only within the implemented rules.
+- Simulated disease and hazard numbers are tunable assumptions rather than medical/scientific estimates.
+- The world is a single local SQLite snapshot; the browser uses polling rather than a streaming connection.
+- Two decision calls run in parallel at most. Very large populations need batching, memory management, and scheduling controls.

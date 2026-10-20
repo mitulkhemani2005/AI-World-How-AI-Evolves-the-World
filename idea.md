@@ -16,9 +16,9 @@ The starting date is an approximate thematic choice. The simulation is not a sci
 
 ## The agents
 
-### Separate brains and identities
+### Shared model, separate minds
 
-Each agent is an individual with a separate brain instance, memory, experiences, relationships, and history. Agents can use different LLM models. A spectator may change the model assigned to an agent; the simulation should record when this happens and preserve the agent's identity and stored memories where possible.
+All agents use one world-wide LLM model selected by the spectator. Each agent still has an independent mind: private observations, memories, experiences, traits, relationships, and life history are sent separately to that shared model for each decision. Sharing an LLM does not mean sharing a conversation or a collective brain. A model change applies to every current agent and every newborn while leaving each individual's identity and history intact.
 
 An LLM is one part of an agent's decision process, not the world itself. The agent receives a bounded view of its situation and chooses from available actions. The world simulation decides what those actions cause.
 
@@ -49,7 +49,7 @@ Diseases can arise and spread through agents or the environment. They can differ
 
 ## Family, inheritance, and teaching
 
-Children inherit biological traits from their parents, with bounded variation if the simulation includes mutation or recombination. Inherited traits are distinct from learned knowledge and from the child's own brain instance.
+Children inherit biological traits from their parents, with bounded variation if the simulation includes mutation or recombination. Inherited traits are distinct from learned knowledge and from the child's individual memories and personality.
 
 Parents and other community members can teach through demonstration, communication, practice, and care. Children may learn skills, language, customs, survival strategies, beliefs, and social expectations. Teaching is an agent behavior that takes time and can succeed or fail; knowledge should not automatically appear in every child.
 
@@ -80,16 +80,17 @@ Property can be personal, family-held, shared, or group-controlled according to 
 
 The human is primarily an observer. The simulation runs autonomously after its rules and starting conditions are set, while the spectator can optionally intervene.
 
-The frontend should let the spectator:
+The dark-themed frontend should let the spectator:
 
-- Watch a map of the world and follow agents in real time.
-- Inspect an agent's needs, health, memories, model, relationships, lineage, and current action.
+- Orbit a continuous 3D landscape, zoom in and out, and follow human figures as they walk.
+- Inspect an agent's needs, health, memories, relationships, lineage, and current action.
+- Adjust selected biological stats through that person's inspector, with changes applied by simulation rules.
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.
 - Review a timeline of births, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters.
 - Pause and change simulation speed.
-- Change the LLM model for an agent and inspect the resulting change in its behavior.
-- Trigger supported events, with every intervention clearly labeled.
+- Change the shared LLM model used by every agent and inspect the resulting changes in their behavior.
+- Drag events onto a location or person, with range and severity determined by the world simulation.
 
 ## Guiding principles
 
@@ -121,4 +122,4 @@ Add tools, skills, construction, property customs, beliefs, rituals, moral syste
 
 ### Stage 5: Spectator controls and long runs
 
-Add model selection and switching, natural event generation, spectator-triggered events, replayable histories, time acceleration, and ways to inspect long-term changes.
+Add a world-wide model selector, natural event generation, drag-and-drop spectator events, replayable histories, time acceleration, and ways to inspect long-term changes.

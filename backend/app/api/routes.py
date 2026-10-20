@@ -3,7 +3,7 @@
 from fastapi import APIRouter, HTTPException
 
 from app.agent_brain.ollama_client import OllamaClient
-from app.domain import ModelChange, SpectatorEventRequest, WorldState
+from app.domain import AgentStateChange, ModelChange, SpectatorEventRequest, WorldState
 from app.settings import settings
 from app.simulation.engine import engine
 
@@ -28,7 +28,7 @@ async def health() -> dict[str, object]:
 
 @router.get("/models")
 async def available_models() -> dict[str, object]:
-    """Return installed local models so the spectator can switch brains."""
+    """Return installed local models for the shared world brain selector."""
     models = await OllamaClient().installed_models()
     return {"available": models is not None, "models": models or []}
 
@@ -58,15 +58,29 @@ async def reset_world(seed: int = 7) -> WorldState:
     return await engine.reset(seed)
 
 
-@router.patch("/agents/{agent_id}/model")
-async def change_agent_model(agent_id: str, request: ModelChange) -> dict[str, object]:
+@router.patch("/world/model", response_model=WorldState)
+async def change_world_model(request: ModelChange) -> WorldState:
+    """Set the same Ollama model for every current and future agent."""
     try:
-        agent = await engine.change_model(agent_id, request.model)
+        models = await OllamaClient().installed_models()
+        if models is not None and request.model not in models:
+            raise ValueError(f"Model '{request.model}' is not installed in Ollama")
+        return await engine.change_global_model(request.model)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.patch("/agents/{agent_id}/state")
+async def change_agent_state(agent_id: str, request: AgentStateChange) -> dict[str, object]:
+    """Allow deliberate spectator adjustments to a person's biological stats."""
+    try:
+        agent = await engine.change_agent_state(agent_id, request)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"agent_id": agent.id, "model": agent.model}
+    return {"agent_id": agent.id, "health": agent.health, "hunger": agent.hunger,
+            "thirst": agent.thirst, "energy": agent.energy, "alive": agent.alive}
 
 
 @router.post("/events", response_model=WorldState)

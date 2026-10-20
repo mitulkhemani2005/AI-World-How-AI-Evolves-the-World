@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import random
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from app.agent_brain.ollama_client import OllamaClient, OllamaError
 from app.domain import (
     Agent,
     AgentAction,
+    AgentStateChange,
     CulturalBelief,
     EventKind,
     EventSource,
@@ -54,6 +56,11 @@ class SimulationEngine:
         self._runner_task: asyncio.Task[None] | None = None
         self._tick_interval_seconds = 3.0
         self.state = self._store.load() or self._new_world(seed=7)
+        # Older snapshots may contain per-person model choices; migrate them to one shared brain.
+        if not self.state.global_model:
+            self.state.global_model = settings.ollama_model
+        for person in self.state.agents:
+            person.model = self.state.global_model
         # A server restart restores the world but never silently resumes a background loop.
         self.state.running = False
         self.state.processing = False
@@ -64,6 +71,7 @@ class SimulationEngine:
         world = WorldState(
             id=str(uuid4()),
             seed=seed,
+            global_model=settings.ollama_model,
             agents=[
                 Agent(
                     id="agent-1",
@@ -164,14 +172,29 @@ class SimulationEngine:
             # Gather proposals first so consent-based actions can be resolved mutually.
             proposals: dict[str, AgentAction] = {}
             fallback_errors: dict[str, str] = {}
-            for agent in observation_state.agents:
-                if not agent.alive or agent.age_days < 3 * 365:
-                    continue
-                try:
-                    proposals[agent.id] = await self._ollama.decide(agent, observation_state)
-                except OllamaError as exc:
-                    proposals[agent.id] = self._fallback_action(agent, observation_state)
-                    fallback_errors[agent.id] = str(exc)[:240]
+            # Infants have needs and depend on caregivers, but do not yet make language-model choices.
+            decision_agents = [
+                person for person in observation_state.agents
+                if person.alive and person.age_days >= 3 * 365
+            ]
+            # A small concurrency limit keeps the shared local model responsive as families grow.
+            decision_slots = asyncio.Semaphore(2)
+
+            async def decide_one(person: Agent) -> tuple[str, AgentAction | OllamaError]:
+                async with decision_slots:
+                    try:
+                        return person.id, await self._ollama.decide(person, observation_state)
+                    except OllamaError as error:
+                        return person.id, error
+
+            results = await asyncio.gather(*(decide_one(person) for person in decision_agents))
+            for agent_id, result in results:
+                if isinstance(result, OllamaError):
+                    person = next(person for person in decision_agents if person.id == agent_id)
+                    proposals[agent_id] = self._fallback_action(person, observation_state)
+                    fallback_errors[agent_id] = str(result)[:240]
+                else:
+                    proposals[agent_id] = result
 
             async with self._lock:
                 world = self.state
@@ -205,8 +228,16 @@ class SimulationEngine:
                         else:
                             self._record_action(world, agent, action, "The other person did not independently agree.")
                     else:
-                        result = self._apply_action(world, agent, action)
-                        self._record_action(world, agent, action, result)
+                        # Translate a resource-seeking choice into a path step when the resource is not underfoot.
+                        resolved_action = self._prepare_resource_action(world, agent, action)
+                        result = self._apply_action(world, agent, resolved_action)
+                        self._record_action(
+                            world,
+                            agent,
+                            resolved_action,
+                            result,
+                            proposed_action=action if resolved_action.action != action.action else None,
+                        )
                     handled.add(agent.id)
 
                 for agent in world.agents:
@@ -218,23 +249,39 @@ class SimulationEngine:
                 self._save()
                 return world.model_copy(deep=True)
 
-    async def change_model(self, agent_id: str, model: str) -> Agent:
+    async def change_global_model(self, model: str) -> WorldState:
         async with self._lock:
-            agent = self._get_agent(agent_id)
             model = model.strip()
             if not model:
                 raise ValueError("Model name cannot be empty")
-            old_model = agent.model
-            agent.model = model
-            agent.memories.append(f"Simulation note: assigned model changed from {old_model} to {model}.")
+            old_model = self.state.global_model
+            self.state.global_model = model
+            for agent in self.state.agents:
+                # Memory and personality remain private even though the model family is shared.
+                agent.model = model
             self._record(
                 self.state,
                 EventSource.SPECTATOR,
                 EventKind.MODEL_CHANGED,
-                f"The spectator changed {agent.name}'s model.",
-                [agent.id],
+                f"The spectator changed the shared brain model to {model}.",
+                [agent.id for agent in self.state.agents],
                 {"old_model": old_model, "new_model": model},
             )
+            self._save()
+            return self.state.model_copy(deep=True)
+
+    async def change_agent_state(self, agent_id: str, update: AgentStateChange) -> Agent:
+        """Apply a visible spectator adjustment and immediately resolve its consequences."""
+        async with self._lock:
+            agent = self._get_agent(agent_id)
+            changed = {key: value for key, value in update.model_dump(exclude_none=True).items()}
+            if not changed:
+                raise ValueError("Choose at least one stat to change")
+            for key, value in changed.items():
+                setattr(agent, key, value)
+            self._check_death(self.state, agent, "a spectator adjustment", EventSource.SPECTATOR)
+            self._record(self.state, EventSource.SPECTATOR, EventKind.SPECTATOR_EVENT,
+                         f"The spectator adjusted {agent.name}'s condition.", [agent.id], {"changes": changed})
             self._save()
             return agent.model_copy(deep=True)
 
@@ -250,25 +297,28 @@ class SimulationEngine:
             affected: list[str] = []
 
             if request.kind == "injury":
-                targets = [agent] if agent else [a for a in world.agents if a.alive]
+                # A dropped mishap only reaches its selected target or nearest nearby people.
+                targets = [agent] if agent else [
+                    person for person in world.agents if person.alive
+                    and self._distance_to(person.x, person.y, x, y) <= 1.5
+                ]
                 for target in targets:
                     if target and target.alive:
                         target.health = max(0, target.health - 25)
                         affected.append(target.id)
                         self._check_death(world, target, "an injury", EventSource.SPECTATOR)
             elif request.kind == "disease_outbreak":
-                targets = [a for a in world.agents if a.alive and abs(a.x - x) + abs(a.y - y) <= 4]
+                targets = [a for a in world.agents if a.alive and self._distance_to(a.x, a.y, x, y) <= 4]
                 for target in targets:
+                    already_ill = target.disease is not None
                     self._infect(world, target, self._random.choice(DISEASES), EventSource.SPECTATOR)
-                    affected.append(target.id)
+                    if not already_ill and target.disease:
+                        affected.append(target.id)
             else:
-                damage = {"wildfire": 30, "storm": 12, "flood": 18, "drought": 5}[request.kind]
-                radius = {"wildfire": 2, "storm": 3, "flood": 2, "drought": 4}[request.kind]
+                damage = {"wildfire": 34, "storm": 16, "flood": 23, "drought": 9}[request.kind]
+                radius = {"wildfire": 2.8, "storm": 4.2, "flood": 2.6, "drought": 4.8}[request.kind]
                 affected = self._hazard_damage(world, x, y, radius, damage, request.kind, EventSource.SPECTATOR)
-                if request.kind in {"wildfire", "drought"}:
-                    for node in world.resources:
-                        if node.kind == "food" and abs(node.x - x) + abs(node.y - y) <= radius:
-                            node.quantity = 0
+                self._apply_hazard_to_resources(world, x, y, radius, request.kind)
 
             self._record(
                 world,
@@ -276,7 +326,7 @@ class SimulationEngine:
                 EventKind.SPECTATOR_EVENT,
                 f"The spectator triggered a {request.kind.replace('_', ' ')}.",
                 affected,
-                {"event": request.kind, "x": x, "y": y},
+                {"event": request.kind, "x": x, "y": y, "affected": len(affected)},
             )
             self._save()
             return world.model_copy(deep=True)
@@ -287,8 +337,12 @@ class SimulationEngine:
             return "This person is too young for that action."
 
         if action.action == "move":
-            agent.x = min(max(agent.x + action.dx, 0), world.width - 1)
-            agent.y = min(max(agent.y + action.dy, 0), world.height - 1)
+            # Resolve diagonal proposals into one cardinal step so movement has consistent speed.
+            dx, dy = action.dx, action.dy
+            if dx and dy:
+                dy = 0
+            agent.x = min(max(agent.x + dx, 0), world.width - 1)
+            agent.y = min(max(agent.y + dy, 0), world.height - 1)
             return f"Moved to ({agent.x}, {agent.y})."
         if action.action == "forage":
             food = self._resource_at(world, "food", agent.x, agent.y)
@@ -472,7 +526,8 @@ class SimulationEngine:
             hunger=10,
             thirst=10,
             energy=75,
-            model=(father.model if father and self._random.random() < 0.5 else mother.model),
+            # A child's brain uses the world's shared model; inherited traits remain individual.
+            model=world.global_model,
             traits=inherited,
             parent_ids=[parent.id for parent in parents],
         )
@@ -530,12 +585,9 @@ class SimulationEngine:
                 self._record(world, EventSource.NATURAL, EventKind.NATURAL_EVENT, f"A natural mishap injured {victim.name}.", [victim.id], {"damage": damage})
             return
         damage = {"wildfire": 32, "storm": 12, "flood": 20, "drought": 3}[kind]
-        radius = 2 if kind in {"wildfire", "flood"} else 3
+        radius = 2.8 if kind == "wildfire" else 2.6 if kind == "flood" else 4.2
         affected = self._hazard_damage(world, x, y, radius, damage, kind, EventSource.NATURAL)
-        if kind in {"wildfire", "drought"}:
-            for node in world.resources:
-                if node.kind == "food" and self._distance_to(node.x, node.y, x, y) <= radius:
-                    node.quantity = 0
+        self._apply_hazard_to_resources(world, x, y, radius, kind)
         self._record(world, EventSource.NATURAL, EventKind.NATURAL_EVENT, f"A {kind} occurred near ({x}, {y}).", affected, {"event": kind, "x": x, "y": y})
 
     def _fallback_action(self, agent: Agent, world: WorldState) -> AgentAction:
@@ -596,6 +648,37 @@ class SimulationEngine:
         if self._random.random() < 0.08:
             return AgentAction(action="communicate", target_agent_id=next((a.id for a in world.agents if a.alive and a.id != agent.id and self._distance(agent, a) <= 3), None), message="Food and water matter for our survival.", reason="Share a survival idea")
         return AgentAction(action="rest", reason="No immediate need")
+
+    def _prepare_resource_action(self, world: WorldState, agent: Agent, action: AgentAction) -> AgentAction:
+        """Turn a resource choice into one sensible step when its target is farther away."""
+        resource_kind = {"forage": "food", "drink": "water"}.get(action.action)
+        if action.action == "gather":
+            resource_kind = action.resource_kind or "wood"
+        if not resource_kind:
+            return action
+        local_resource = self._resource_at(world, resource_kind, agent.x, agent.y)
+        if local_resource and local_resource.quantity > 0:
+            return action
+        # The engine may only route toward a resource that this person can currently observe.
+        visible_targets = [
+            node for node in world.resources
+            if node.kind == resource_kind and node.quantity > 0
+            and self._distance_to(node.x, node.y, agent.x, agent.y) <= 5
+        ]
+        target = min(
+            visible_targets,
+            key=lambda node: self._distance_to(agent.x, agent.y, node.x, node.y),
+            default=None,
+        )
+        if not target:
+            return action
+        return self._move_or_act(
+            agent,
+            target,
+            action.action,
+            f"The model chose to {action.action}; move toward nearby {resource_kind} first",
+            resource_kind if action.action == "gather" else None,
+        )
 
     def _build(self, world: WorldState, agent: Agent, kind: str) -> str:
         if kind not in BUILDING_RULES:
@@ -736,14 +819,32 @@ class SimulationEngine:
         self._remember(agent, f"You began to feel sick with {disease}.")
         self._record(world, source, EventKind.DISEASE_STARTED, f"{agent.name} became ill with {disease}.", [agent.id], {"disease": disease})
 
-    def _hazard_damage(self, world: WorldState, x: int, y: int, radius: int, damage: int, hazard: str, source: EventSource) -> list[str]:
+    def _hazard_damage(self, world: WorldState, x: int, y: int, radius: float, damage: int, hazard: str, source: EventSource) -> list[str]:
         affected: list[str] = []
         for agent in world.agents:
-            if agent.alive and self._distance_to(agent.x, agent.y, x, y) <= radius:
-                agent.health = max(0, agent.health - damage)
+            distance = self._distance_to(agent.x, agent.y, x, y)
+            if agent.alive and distance <= radius:
+                # Model hazard strength as a radial force with a softer edge.
+                falloff = max(0.18, 1 - (distance / radius) * 0.78)
+                impact = max(1, round(damage * falloff))
+                agent.health = max(0, agent.health - impact)
                 affected.append(agent.id)
                 self._check_death(world, agent, hazard, source)
         return affected
+
+    def _apply_hazard_to_resources(self, world: WorldState, x: int, y: int, radius: float, hazard: str) -> None:
+        """Spread environmental damage to nearby food and building materials."""
+        for node in world.resources:
+            distance = self._distance_to(node.x, node.y, x, y)
+            if distance > radius:
+                continue
+            falloff = max(0.12, 1 - distance / radius)
+            if hazard in {"wildfire", "drought"} and node.kind == "food":
+                node.quantity = max(0, node.quantity - math.ceil(node.quantity * falloff))
+            elif hazard == "wildfire" and node.kind == "wood":
+                node.quantity = max(0, node.quantity - math.ceil(node.quantity * falloff * 0.65))
+            elif hazard == "flood" and node.kind in {"food", "wood"}:
+                node.quantity = max(0, node.quantity - math.ceil(node.quantity * falloff * 0.35))
 
     def _check_death(self, world: WorldState, agent: Agent, cause: str, source: EventSource = EventSource.NATURAL) -> None:
         if agent.alive and agent.health <= 0:
@@ -770,8 +871,9 @@ class SimulationEngine:
         return abs(first.x - second.x) + abs(first.y - second.y)
 
     @staticmethod
-    def _distance_to(x1: int, y1: int, x2: int, y2: int) -> int:
-        return abs(x1 - x2) + abs(y1 - y2)
+    def _distance_to(x1: int, y1: int, x2: int, y2: int) -> float:
+        # Distances match the circular event footprints shown on the 3D land.
+        return math.hypot(x1 - x2, y1 - y2)
 
     @staticmethod
     def _adult(agent: Agent) -> bool:
@@ -825,9 +927,18 @@ class SimulationEngine:
         return AgentAction(action="move", dx=dx, dy=dy, reason=reason, resource_kind=resource_kind)
 
     @staticmethod
-    def _record_action(world: WorldState, agent: Agent, action: AgentAction, result: str) -> None:
+    def _record_action(
+        world: WorldState,
+        agent: Agent,
+        action: AgentAction,
+        result: str,
+        proposed_action: AgentAction | None = None,
+    ) -> None:
         agent.last_action = action
-        SimulationEngine._record(world, EventSource.AGENT_ACTION, EventKind.ACTION, f"{agent.name}: {result}", [agent.id], {"action": action.action, "reason": action.reason, "result": result})
+        details: dict[str, object] = {"action": action.action, "reason": action.reason, "result": result}
+        if proposed_action:
+            details["proposed_action"] = proposed_action.action
+        SimulationEngine._record(world, EventSource.AGENT_ACTION, EventKind.ACTION, f"{agent.name}: {result}", [agent.id], details)
 
     @staticmethod
     def _record(
