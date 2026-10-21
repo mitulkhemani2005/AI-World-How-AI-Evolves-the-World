@@ -991,7 +991,8 @@ function renderWorld(next) {
   const year = Math.floor(world.tick / 12) + 1; const month = (world.tick % 12) + 1;
   const living = world.agents.filter((agent) => agent.alive).length;
   const localTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · MONTH ${month} · ${world.time_scale || 1}×${world.processing ? " · THINKING" : ""}`;
+  // Keep the spectator clock focused on real local time and the simulation calendar.
+  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · MONTH ${month}`;
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
