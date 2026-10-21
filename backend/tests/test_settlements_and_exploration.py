@@ -5,7 +5,7 @@ from unittest.mock import patch
 
 import test_world as fixtures
 from app.agent_brain.ollama_client import OllamaClient
-from app.domain import AgentAction, Animal, CraftedItem, EventKind, Structure
+from app.domain import AgentAction, Animal, CraftedItem, EventKind, ResourceNode, Structure
 from app.simulation.planning import material_stock
 from app.simulation.rules import PREGNANCY_MONTHS
 from app.simulation.engine import SimulationEngine
@@ -14,6 +14,45 @@ from app.simulation.engine import SimulationEngine
 class SettlementTests(unittest.IsolatedAsyncioTestCase):
     setUp = fixtures.WorldTests.setUp
     asyncTearDown = fixtures.WorldTests.asyncTearDown
+
+    async def test_agents_keep_private_place_memories_and_route_to_known_food(self):
+        world = self.engine.state
+        agent, other = world.agents
+        agent.x, agent.y = 17, 8
+        other.x, other.y = 0, 0
+        world.resources = [ResourceNode(kind="fruit", x=17, y=8, quantity=4, capacity=4),
+                           ResourceNode(kind="water", x=17, y=8, quantity=4, capacity=4)]
+        world.structures = [Structure(id="home", kind="lean_to", x=17, y=8,
+                                      owner_agent_id=agent.id, built_at_tick=world.tick)]
+
+        self.engine._learn_visible_places(world)
+        self.assertTrue(any(place.kind == "food" and place.detail == "fruit" and place.x == 17
+                            for place in agent.place_memories))
+        self.assertTrue(any(place.kind == "shelter" and place.x == 17 for place in agent.place_memories))
+        self.assertEqual(other.place_memories, [], "one person's observed places must not leak to another mind")
+        self.assertEqual(OllamaClient._observation(agent, world)["agent"]["known_places"][-1]["x"], 17)
+
+        agent.x = 7  # The remembered fruit is now beyond the five-cell observation radius.
+        route = self.engine._prepare_resource_action(world, agent, AgentAction(action="forage"))
+        self.assertEqual(route.action, "move")
+        self.assertEqual((route.dx, route.dy), (1, 0))
+
+    async def test_harsh_weather_reflex_returns_person_to_remembered_shelter(self):
+        world = self.engine.state
+        agent, other = world.agents
+        agent.x, agent.y, other.x, other.y = 17, 8, 0, 0
+        world.resources = []
+        world.structures = [Structure(id="home", kind="lean_to", x=17, y=8,
+                                      owner_agent_id=agent.id, built_at_tick=world.tick)]
+        self.engine._learn_visible_places(world)
+        agent.x = 23  # Leave sight of the shelter before the weather turns dangerous.
+        world.weather = "rain"
+
+        self.engine._survival_reflexes(world, now=10)
+
+        self.assertEqual((agent.x, agent.y), (22, 8))
+        self.assertEqual(agent.last_action.action, "move")
+        self.assertIn("remembered shelter", agent.last_action.reason)
 
     async def test_fatal_damage_records_specific_cause_and_snapshot(self):
         world = self.engine.state
