@@ -28,13 +28,13 @@ class SettlementTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(person.death_details["last_injury"]["cause"], cause)
             self.assertEqual(world.events[-1].kind, EventKind.DEATH)
 
-    async def test_90_day_pregnancy_reaches_birth(self):
+    async def test_9_day_pregnancy_reaches_birth(self):
         world = self.engine.state
         first, second = world.agents
         self.engine._resolve_reproduction(world, first, second)
-        self.assertEqual(PREGNANCY_DAYS, 90)
-        self.assertEqual(second.pregnancy_days_remaining, 90)
-        for _ in range(90):
+        self.assertEqual(PREGNANCY_DAYS, 9)
+        self.assertEqual(second.pregnancy_days_remaining, 9)
+        for _ in range(9):
             second.hunger = second.thirst = 0
             second.energy, second.health, second.disease = 80, 100, None
             world.tick += 1
@@ -169,9 +169,9 @@ class SettlementTests(unittest.IsolatedAsyncioTestCase):
         restored = SimulationEngine(str(self.engine._store.path))
         self.assertEqual(restored.state.id, world.id)
         self.assertTrue(restored.state.running)
-        self.assertEqual(restored.state.agents[1].pregnancy_days_remaining, 60)
+        self.assertEqual(restored.state.agents[1].pregnancy_days_remaining, 6)
         restored = SimulationEngine(str(self.engine._store.path))
-        self.assertEqual(restored.state.agents[1].pregnancy_days_remaining, 60)
+        self.assertEqual(restored.state.agents[1].pregnancy_days_remaining, 6)
 
     async def test_model_chosen_exploration_continues_through_boarding_sailing_and_landing(self):
         world = self.engine.state

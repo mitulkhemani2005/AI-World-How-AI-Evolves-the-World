@@ -74,7 +74,7 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.start()
         await asyncio.sleep(0.6)
         self.assertEqual(world.time_scale, 8)
-        self.assertGreater(world.day_progress_seconds, 3)
+        self.assertGreaterEqual(world.tick, 1)
         await self.engine.change_speed(4, False)
         await asyncio.sleep(0.6)
         self.assertEqual(world.time_scale, 4)

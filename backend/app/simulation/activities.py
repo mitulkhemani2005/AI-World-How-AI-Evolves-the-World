@@ -213,6 +213,10 @@ class ActivityRules:
                 continue
             animal.last_attack_tick = world.tick
             target = min(targets, key=lambda person: self._distance(person, animal))
+            # Witnessing a predator also affects nearby people, even if no one is injured.
+            for witness in targets:
+                witness.fear = min(100, witness.fear + (24 if witness.id == target.id else 12))
+                witness.stress = min(100, witness.stress + 6)
             # A nearby caregiver may defend an infant with a real equipped weapon.
             guards = [person for person in targets if person.age_days >= ADULT_AGE_DAYS and self._weapon(world, person)]
             guard = next((person for person in guards if target.id in person.children_ids), target)

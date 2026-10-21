@@ -80,7 +80,7 @@ class OllamaClient:
         observation = {
             "you": {key: full["agent"][key] for key in (
                 "name", "sex", "age_years", "health", "hunger", "thirst", "energy", "disease",
-                "memories", "knowledge", "inventory", "traits", "pregnancy_days_remaining", "children")},
+                "memories", "knowledge", "inventory", "traits", "pregnancy_days_remaining", "children", "fear", "stress", "loneliness")},
             "last_result": agent.last_result,
             "your_chosen_project": agent.construction_project,
             "crafting_project": agent.crafting_project,
@@ -112,6 +112,10 @@ class OllamaClient:
             "cooperate, raise a family or explore. After meeting basic needs, consider bonding and having children "
             "to continue your family. Answer a partner's family proposal when you want to accept it. "
             "A proposal remains available for several turns; each person independently agrees. "
+            "Care for hungry or frightened children and partners; notice injury, grief and threats. "
+            "Pregnancy changes bodily needs; both parents can protect, gather, build and teach. "
+            "People have individual skills and attachments rather than fixed jobs by sex. "
+            "If expecting a child, choose a name before birth. Avoid idle repetitions of the same task. "
             "The list is ordered by practical urgency, but the choice is yours. "
             "Finish useful work before switching goals. When materials for your chosen shelter are ready, build it. "
             "Use and repair shared buildings/items instead of making duplicates. Make essentials for real needs. "
@@ -150,7 +154,7 @@ class OllamaClient:
             action = choices[index].model_copy(deep=True)
             action.reason = str(selection.get("reason") or action.reason)[:300]
             # Teaching must transmit an actually learned lesson, not a model-invented skill.
-            if action.action != "teach" and selection.get("message"):
+            if action.action not in {"teach", "name_child"} and selection.get("message"):
                 action.message = str(selection["message"])[:240]
             return AgentAction.model_validate(action.model_dump())
         except (httpx.HTTPError, ValueError, KeyError, TypeError, IndexError) as exc:
@@ -171,6 +175,10 @@ class OllamaClient:
         buildings = [item for item in world.structures if item.condition >= 20 and distance(item) <= 3]
         stock = material_stock(world, agent)
         local_cell = next((cell for cell in world.terrain if cell.x == agent.x and cell.y == agent.y), None)
+        # A very small language model gets only actions with current, concrete purpose.
+        # Social motives derive from relationships, distress and remembered danger.
+        threats = [animal for animal in world.animals if animal.alive and animal.animal_type == "wild"
+                   and animal.species in PREDATOR_SPECIES and distance(animal) <= 3]
         if local_cell and local_cell.last_tended_tick != world.tick and (
             local_cell.condition < 95 or local_cell.fertility < 45 or local_cell.pollution > 10
             or any(node.contamination > 15 and distance(node) <= 1 for node in resources)
@@ -184,8 +192,6 @@ class OllamaClient:
             add(2 if agent.energy < 20 else 12, "rest", "Recover energy and health")
 
         if agent.age_days >= ADULT_AGE_DAYS:
-            threats = [animal for animal in world.animals if animal.alive and animal.animal_type == "wild"
-                       and animal.species in PREDATOR_SPECIES and distance(animal) <= 3]
             if threats:
                 add(3, "flee", "Get away from the nearby predator")
                 for animal in threats:
@@ -246,34 +252,74 @@ class OllamaClient:
                 and agent.inventory.get(kind, 0) < (2 if kind == "wood" else 1)
                 and any(node.kind == kind for node in resources)):
                 add(60, "gather", f"Collect useful {kind}", resource_kind=kind)
+        for expected_mother in world.agents:
+            if (expected_mother.alive and expected_mother.pregnancy_days_remaining is not None
+                    and agent.id in {expected_mother.id, expected_mother.other_parent_id}
+                    and agent.id not in expected_mother.unborn_name_suggestions
+                    and (agent.id == expected_mother.id or distance(expected_mother) <= 3)):
+                for name in OllamaClient._family_names(agent, expected_mother, world):
+                    add(6 if expected_mother.pregnancy_days_remaining <= 5 else 17,
+                        "name_child", f"Choose {name} as a name for the expected child",
+                        target_agent_id=expected_mother.id, message=name)
+        for child in world.agents:
+            if (child.alive and child.name_status == "provisional" and child.age_days <= 30
+                    and agent.id in child.parent_ids and distance(child) <= 3):
+                mother = next((person for person in world.agents if person.id in child.parent_ids
+                               and person.sex == "female"), None)
+                if mother:
+                    other_parent_id = next((parent_id for parent_id in child.parent_ids if parent_id != mother.id), None)
+                    for name in OllamaClient._family_names(agent, mother, world, other_parent_id):
+                        add(6, "name_child", f"Choose {name} as the newborn's lasting name",
+                            target_agent_id=child.id, message=name)
         for person in world.agents:
-            if person.id == agent.id or distance(person) > 3:
+            if person.id == agent.id or distance(person) > 5:
                 continue
             if not person.alive:
                 if not person.buried:
-                    add(32, "mourn", f"Mourn {person.name}", target_agent_id=person.id)
+                    if person.id not in agent.mourned_ids:
+                        add(32, "mourn", f"Mourn {person.name}", target_agent_id=person.id)
                     add(33, "bury", f"Bury {person.name}", target_agent_id=person.id)
+                continue
+            close_bond = person.id in agent.children_ids or person.id in agent.parent_ids or person.id == agent.bonded_partner_id
+            if (person.alive and close_bond and distance(person) > 1 and agent.last_social_tick != world.tick
+                    and (agent.loneliness > 30 or person.health < 65 or person.fear > 50)):
+                add(12 if person.age_days < 3 * 365 and person.id in agent.children_ids else 24,
+                    "visit", f"Travel to support {person.name}", target_agent_id=person.id)
+            if distance(person) > 3:
                 continue
             lesson = next((item for item in agent.knowledge if item not in person.knowledge), None)
             offer = person.family_offer if person.family_offer_until_tick >= world.tick else None
             answering = offer is not None and offer.target_agent_id == agent.id
             # Reserve attention for a first family and for answering a partner, before optional projects.
-            if person.age_days >= ADULT_AGE_DAYS and agent.age_days >= ADULT_AGE_DAYS:
+            if (person.age_days >= ADULT_AGE_DAYS and agent.age_days >= ADULT_AGE_DAYS
+                    and agent.relationship_scores.get(person.id, 0) >= -20):
                 if person.bonded_partner_id != agent.id:
-                    add(13 if answering and offer.action == "bond" else 19, "bond",
-                        f"{'Answer the proposal to bond with' if answering else 'Propose a bond with'} {person.name}", target_agent_id=person.id)
-                if not reproduction_block(world, agent, person):
+                    if not (agent.family_offer and agent.family_offer.action == "bond"
+                            and agent.family_offer.target_agent_id == person.id and agent.family_offer_until_tick >= world.tick):
+                        add(13 if answering and offer.action == "bond" else 19, "bond",
+                            f"{'Answer the proposal to bond with' if answering else 'Propose a bond with'} {person.name}", target_agent_id=person.id)
+                if (not reproduction_block(world, agent, person) and agent.fear < 70
+                        and person.fear < 70 and not threats):
                     priority = 13 if answering and offer.action == "reproduce" else 16 if agent.bonded_partner_id == person.id else 23
-                    add(priority, "reproduce", f"{'Accept the family proposal from' if answering else 'Plan a child with'} {person.name}", target_agent_id=person.id)
+                    if not (agent.family_offer and agent.family_offer.action == "reproduce"
+                            and agent.family_offer.target_agent_id == person.id and agent.family_offer_until_tick >= world.tick):
+                        add(priority, "reproduce", f"{'Accept the family proposal from' if answering else 'Plan a child with'} {person.name}", target_agent_id=person.id)
             if distance(person) <= 1:
-                if person.health < 75 or person.hunger > 45 or person.thirst > 45:
-                    add(15 if person.id in agent.children_ids else 30, "help", f"Care for {person.name}", target_agent_id=person.id)
+                needs_care = (person.health < 75 or person.hunger > 45 or person.thirst > 45
+                              or person.fear > 35 or person.stress > 50 or person.pregnancy_days_remaining is not None)
+                if needs_care and agent.last_social_tick != world.tick:
+                    priority = 8 if person.id in agent.children_ids and person.age_days < 3 * 365 else 14 if (
+                        person.id in agent.children_ids or person.id == agent.bonded_partner_id) else 30
+                    add(priority, "help", f"Care for {person.name}'s health and safety", target_agent_id=person.id)
                 if lesson:
                     add(29, "teach", f"Teach {person.name}: {lesson}", target_agent_id=person.id, message=lesson)
                 hostile = agent.relationship_scores.get(person.id, 0) < -10 and agent.traits.get("aggression", 0.5) > 0.6
-                add(24 if hostile else 85, "fight", f"Confront {person.name} over the conflict" if hostile else f"Confront {person.name}", target_agent_id=person.id)
-            add(52, "communicate", f"Share an idea with {person.name}", target_agent_id=person.id,
-                message=f"I have learned {agent.knowledge[-1]}." if agent.knowledge else "We need food, water and shelter.")
+                if hostile and agent.fear < 65 and agent.health > 40:
+                    add(29, "fight", f"Confront {person.name} over the conflict", target_agent_id=person.id)
+            if (agent.last_social_tick != world.tick and (close_bond or agent.traits.get("sociability", 0.5) > 0.45)):
+                add(22 if close_bond and (agent.stress > 25 or person.stress > 25 or agent.loneliness > 35) else 52,
+                    "communicate", f"Share support or an idea with {person.name}", target_agent_id=person.id,
+                    message=f"I have learned {agent.knowledge[-1]}." if agent.knowledge else "Let us stay safe and care for each other.")
 
         for animal in world.animals:
             if not animal.alive or distance(animal) > 1:
@@ -335,11 +381,17 @@ class OllamaClient:
         if exploration:
             visited, dx, dy = sorted(exploration)[0]
             add(90 if visited else 55, "move", "Explore nearby land", dx=dx, dy=dy)
+        # The final five days are a real deadline in this compressed gestation.
+        # Keep immediate survival and child protection available, then let the
+        # parent choose among actual names without drowning the tiny model in jobs.
+        if any(priority <= 6 and action.action == "name_child" for priority, action in ranked):
+            ranked = [(priority, action) for priority, action in ranked
+                      if action.action == "name_child" or priority <= 8]
         ranked.sort(key=lambda entry: entry[0])
         # Deduplicate material choices shared by several construction projects.
         result, seen = [], set()
         for _, action in ranked:
-            key = (action.action, action.dx, action.dy, action.resource_kind, action.structure_type,
+            key = (action.action, action.dx, action.dy, action.resource_kind, action.structure_type, action.message if action.action == "name_child" else None,
                    action.target_agent_id, action.target_animal_id, action.target_group_id, action.belief_type, action.group_type,
                    action.item_kind, action.target_item_id, action.target_structure_id, action.destination_x, action.destination_y)
             if key not in seen:
@@ -352,6 +404,20 @@ class OllamaClient:
             offset = agent.decisions_made % len(others)
             return result[:6] + [others[offset], others[(offset + 1) % len(others)]]
         return result[:8] or [AgentAction(action="rest", reason="No safe opportunity is currently visible")]
+
+    @staticmethod
+    def _family_names(parent: Agent, mother: Agent, world: WorldState,
+                      other_parent_id: str | None = None) -> list[str]:
+        """Offer short names influenced by the parents; the person chooses one through Qwen."""
+        other = next((person for person in world.agents
+                      if person.id == (other_parent_id or mother.other_parent_id)), None)
+        roots = [mother.name, other.name if other else parent.name]
+        combinations = [(roots[0][:2] + roots[1][-2:]).capitalize(),
+                        (roots[1][:2] + roots[0][-2:]).capitalize(),
+                        (roots[0][:1] + roots[1][:1] + "ra").capitalize()]
+        used = {person.name.casefold() for person in world.agents}
+        combinations.extend(("Tavi", "Suri", "Kori", "Luma", "Ravi", "Mira", "Sena"))
+        return [name for name in dict.fromkeys(combinations) if name.isalpha() and name.casefold() not in used][:3]
 
     @staticmethod
     def _available_buildings(agent: Agent, world: WorldState) -> list[str]:
@@ -444,6 +510,10 @@ class OllamaClient:
                 "pregnancy_days_remaining": agent.pregnancy_days_remaining,
                 "parents": agent.parent_ids,
                 "children": agent.children_ids,
+                "fear": round(agent.fear),
+                "stress": round(agent.stress),
+                "loneliness": round(agent.loneliness),
+                "unborn_name_suggestions": agent.unborn_name_suggestions,
                 "current_group_id": next(
                     (group.id for group in world.groups if agent.id in group.member_ids), None
                 ),
@@ -509,7 +579,7 @@ class OllamaClient:
             "forage", "drink", "rest", "move", "communicate", "help", "teach",
             "gather", "hunt", "tame", "tend_animal", "collect_animal_food",
             "plant", "water_crop", "harvest", "cook", "build", "bond",
-            "reproduce", "fight", "form_group", "join_group", "create_belief", "mourn", "bury", "tend_terrain",
+            "reproduce", "name_child", "visit", "fight", "form_group", "join_group", "create_belief", "mourn", "bury", "tend_terrain",
             "craft", "use_item", "drop_item", "repair", "experiment", "board", "sail", "disembark", "defend", "flee", "explore",
         }
         if agent.vehicle_id:
@@ -550,7 +620,9 @@ class OllamaClient:
         else:
             if not any(any(item not in person.knowledge for item in agent.knowledge) for person in close):
                 actions.discard("teach")
-            if not any(person.health < 75 or person.hunger > 45 or person.thirst > 45 for person in close):
+            if not any(person.health < 75 or person.hunger > 45 or person.thirst > 45
+                       or person.fear > 35 or person.stress > 50
+                       or person.pregnancy_days_remaining is not None for person in close):
                 actions.discard("help")
         if not any(person.age_days >= ADULT_AGE_DAYS for person in nearby):
             actions.discard("bond")

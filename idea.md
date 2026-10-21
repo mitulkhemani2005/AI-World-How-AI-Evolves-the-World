@@ -26,6 +26,8 @@ An LLM is one part of an agent's decision process, not the world itself. The age
 
 Agents can differ in temperament, preferences, abilities, health, and learned habits. Helpful, cooperative, aggressive, deceptive, generous, or leadership behavior should emerge through agent traits, experience, circumstances, and choices. Avoid assigning every person a fixed social role at birth.
 
+Fear, stress, loneliness, attachment and grief should change which opportunities an agent notices. Trusted people may comfort each other or reunite after separation; family care and conflicts should change later relationships. The simulation may model sex-specific pregnancy while allowing every person to learn food gathering, protection, building and childcare according to their experience. Ancient life is a theme rather than a license to assign fixed occupations to men or women.
+
 The social world may include romance and partnerships, affairs, friendship, rivalry, cooperation, disputes, violence, leadership, and criminal or gang-like groups. These behaviors should affect trust, family relations, safety, and group dynamics.
 
 ### Communication and ideas
@@ -91,7 +93,7 @@ The separate white-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
-- Advance biology from elapsed real running time, independently of model latency. A biological day takes 60 seconds at 1x; Auto defaults to 2x -> 4x -> 8x, doubling every two running minutes. Fixed speeds up to 16x are available. As requested in the later clock revision, visible sunlight and the local clock follow the spectator's computer time; simulated year/day are displayed separately. Agents can act several times during a biological day.
+- Advance biology from elapsed real running time, independently of model latency. At default 1×, 365 simulated days take 12 real minutes; explicit speeds up to 16× are available. Visible sunlight and the local clock follow the spectator's computer time; simulated year/day are displayed separately. Agents can act several times during a biological day.
 - Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
 - Keep dead bodies visible on the ground. Nearby relatives receive the death in their memories and decide whether to mourn, bury, or attend to other needs. Burial leaves a grave marker.
 - Give animals hardcoded NPC behavior for movement, feeding, watering, health, illness, reproduction, and death. Animals do not make LLM calls.
@@ -142,7 +144,7 @@ The current delivery and the remaining work for these stages are tracked in [imp
 
 ## Family and food ecology revision
 
-Family planning must remain visible among feasible choices after immediate survival needs are met. Agents can approach partners and exchange persistent, expiring proposals instead of requiring identical choices in one decision round. Both adults still independently agree. Physical survival responses can meet urgent needs while the shared model is busy; they never fabricate consent or resources. Pregnancy takes 90 biological days and postpartum recovery takes 120 days. Infants travel with a living caregiver and learn later.
+Family planning must remain visible among feasible choices after immediate survival needs are met. Agents can approach partners and exchange persistent, expiring proposals instead of requiring identical choices in one decision round. Both adults still independently agree. Physical survival responses can meet urgent needs while the shared model is busy; they never fabricate consent or resources. The current compressed pregnancy takes 9 biological days and postpartum recovery takes 120 days. Infants travel with a living caregiver and learn later.
 
 Animals are small NPC food sources, secondary to the people. Healthy habitat determines the wildlife budget, capped at 24 wild animals; kept animals use a separate sustainable settlement allowance capped at 24. Natural spawning, reproduction, and migration enforce these budgets.
 
@@ -151,6 +153,6 @@ Animals are small NPC food sources, secondary to the people. Healthy habitat det
 - Every death must explain its recorded cause. New fatal damage is attributed immediately, with biological state and damage context retained. Old incomplete records remain labelled as historical attribution.
 - Creating an item or building gives creator credit, while practical use is shared. Families and groups can pool nearby materials. People can disagree, refuse a handover, or fight within a family, within a group, or with outsiders.
 - Building requires a suitable dry site. Farming requires fertile open ground with moisture. Shared shelter capacity, nearby food, crops and existing structures determine practical demand. Repair useful objects before building duplicates.
-- Pregnancy lasts 90 biological days. Existing pregnancies from the old 270-day rule migrate proportionally once, preserving the current world.
+- The latest chosen pregnancy duration is 9 biological days. Existing pregnancies from the old 90-day rule migrate proportionally once, preserving the current world. The condensed duration is a deliberate simulation rule, not a claim about hominin biology. Parents can suggest a name before birth; sex is sampled independently. If model latency prevents naming in time, a parent-derived provisional name is used at birth and a parent can choose a lasting name afterward.
 - Agents can discover raft and weapon techniques by experimenting with real materials, teach them, craft shared tools, and learn by using them. Rafts carry up to four people, cross water through explicit sailing, and remain available at a landing. There is no teleportation across oceans.
 - Predators create a natural survival pressure. People can flee, equip weapons and defend themselves or children. Shelter, fire and weapons affect encounters. Predator births and spawning remain bounded by wildlife capacity and a two-predator limit.

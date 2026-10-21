@@ -91,6 +91,21 @@ class SimulationEngine(ActivityRules):
                 if person.pregnancy_days_remaining is not None:
                     person.pregnancy_days_remaining = math.ceil(person.pregnancy_days_remaining / 3)
             self.state.rules_version = 2
+        if self.state.rules_version < 3:
+            # Keep the same fraction of the current day and pregnancy when upgrading
+            # a saved world. Preserve its identity, people, and run/pause choice.
+            previous_day = self.state.day_length_seconds
+            self.state.day_progress_seconds = min(
+                settings.day_length_seconds - 0.0001,
+                self.state.day_progress_seconds / previous_day * settings.day_length_seconds,
+            )
+            self.state.day_length_seconds = settings.day_length_seconds
+            self.state.time_scale = self.state.base_time_scale = 1
+            self.state.auto_accelerate = False
+            for person in self.state.agents:
+                if person.pregnancy_days_remaining is not None:
+                    person.pregnancy_days_remaining = max(1, math.ceil(person.pregnancy_days_remaining / 10))
+            self.state.rules_version = 3
         for person in self.state.agents:
             if not person.alive and not person.death_details:
                 # Historical snapshots cannot identify a fatal blow that was never recorded.
@@ -106,7 +121,7 @@ class SimulationEngine(ActivityRules):
             id=str(uuid4()),
             seed=seed,
             global_model=settings.ollama_model,
-            rules_version=2,
+            rules_version=3,
             width=36,
             height=18,
             day_length_seconds=settings.day_length_seconds,
@@ -617,6 +632,8 @@ class SimulationEngine(ActivityRules):
                         if resolved_action is action:
                             resolved_action = self._prepare_corpse_action(world, agent, action)
                         if resolved_action is action:
+                            resolved_action = self._prepare_social_action(world, agent, action)
+                        if resolved_action is action:
                             resolved_action = self._prepare_resource_action(world, agent, action)
                         agent.pending_action = action.model_copy(deep=True) if (
                             resolved_action.action in {"move", "board", "sail", "disembark"} and resolved_action.action != action.action
@@ -811,6 +828,10 @@ class SimulationEngine(ActivityRules):
                 return "There was no deceased person nearby to attend to."
             related = self._is_related(agent, deceased)
             if action.action == "mourn":
+                if deceased.id in agent.mourned_ids:
+                    return f"{agent.name} has already mourned {deceased.name}."
+                agent.mourned_ids.append(deceased.id)
+                agent.stress = max(0, agent.stress - 10)
                 self._remember(agent, f"Mourned {deceased.name}, who died from {deceased.death_cause or 'unknown causes'}.")
                 if related:
                     self._remember(agent, f"You grieved for your relative {deceased.name}.")
@@ -871,6 +892,12 @@ class SimulationEngine(ActivityRules):
             self._remember(target, f"{agent.name} said: {action.message}")
             self._remember(agent, f"Told {target.name}: {action.message}")
             self._adjust_relationship(agent, target, 2)
+            # Conversation reduces isolation, but repeated chatter in one day has diminishing value.
+            agent.stress = max(0, agent.stress - 4)
+            target.stress = max(0, target.stress - 2)
+            agent.loneliness = max(0, agent.loneliness - 22)
+            target.loneliness = max(0, target.loneliness - 12)
+            agent.last_social_tick = world.tick
             self._spread_belief(world, target, action.message)
             self._record(world, EventSource.AGENT_ACTION, EventKind.AGENT_SPOKE, f"{agent.name} shared an idea with {target.name}: {action.message}", [agent.id, target.id])
             return f"Shared an idea with {target.name}."
@@ -878,6 +905,12 @@ class SimulationEngine(ActivityRules):
             target = self._nearby_target(world, agent, action.target_agent_id, 1)
             if not target:
                 return "No one nearby could be helped."
+            agent.last_social_tick = world.tick
+            agent.stress = max(0, agent.stress - 3)
+            target.stress = max(0, target.stress - 6)
+            target.fear = max(0, target.fear - 7)
+            agent.loneliness = max(0, agent.loneliness - 15)
+            target.loneliness = max(0, target.loneliness - 15)
             if target.last_care_tick != world.tick:
                 target.health = min(100, target.health + 4)
                 target.energy = min(100, target.energy + 4)
@@ -915,6 +948,21 @@ class SimulationEngine(ActivityRules):
             return self._build(world, agent, action.structure_type or "lean_to")
         if action.action == "fight":
             return self._fight(world, agent, action.target_agent_id)
+        if action.action == "name_child":
+            return self._name_child(world, agent, action)
+        if action.action == "visit":
+            target = self._nearby_target(world, agent, action.target_agent_id, 1)
+            if not target:
+                return "The familiar person was no longer nearby."
+            agent.last_social_tick = world.tick
+            agent.loneliness = max(0, agent.loneliness - 30)
+            target.loneliness = max(0, target.loneliness - 20)
+            agent.stress = max(0, agent.stress - 5)
+            target.stress = max(0, target.stress - 5)
+            self._adjust_relationship(agent, target, 1)
+            self._record(world, EventSource.AGENT_ACTION, EventKind.RELATIONSHIP,
+                         f"{agent.name} spent time with {target.name}.", [agent.id, target.id])
+            return f"Spent time with {target.name}."
         if action.action == "form_group":
             return self._form_group(world, agent, action.message, action.group_type)
         if action.action == "join_group":
@@ -1115,6 +1163,17 @@ class SimulationEngine(ActivityRules):
     def _advance_biology(self, world: WorldState, agent: Agent) -> None:
         """Advance body state once per simulated day; all ages use the same hazard rules."""
         agent.age_days += 1
+        # Feelings persist between decisions and ease gradually in safer surroundings.
+        agent.fear = max(0, agent.fear - 2)
+        agent.stress = max(0, agent.stress - (2 if self._has_shelter(world, agent) else 1))
+        familiar_nearby = any(other.alive and other.id != agent.id and self._distance(agent, other) <= 1
+                              and (other.id in agent.parent_ids or other.id in agent.children_ids
+                                   or other.id == agent.bonded_partner_id
+                                   or agent.relationship_scores.get(other.id, 0) >= 40)
+                              for other in world.agents)
+        agent.loneliness = max(0, agent.loneliness - 5) if familiar_nearby else min(100, agent.loneliness + 3)
+        if agent.loneliness > 60:
+            agent.stress = min(100, agent.stress + 1)
         shelter = self._has_shelter(world, agent)
         exposed = not shelter and world.weather in {"cold", "rain", "wind"}
         # Needs represent daily meals, water and sleep, rather than weeks between survival tasks.
@@ -1160,8 +1219,10 @@ class SimulationEngine(ActivityRules):
 
         if agent.pregnancy_days_remaining is not None:
             agent.pregnancy_days_remaining -= 1
-            agent.hunger = min(100, agent.hunger + 0.4)
-            agent.thirst = min(100, agent.thirst + 0.3)
+            # Pregnancy imposes an actual care and nutrition burden in the short 9-day cycle.
+            agent.hunger = min(100, agent.hunger + 3)
+            agent.thirst = min(100, agent.thirst + 2)
+            agent.energy = max(0, agent.energy - 2)
             if agent.pregnancy_days_remaining <= 0:
                 self._give_birth(world, agent)
         if agent.age_days > 45 * 365:
@@ -1236,12 +1297,29 @@ class SimulationEngine(ActivityRules):
         for trait in TRAIT_NAMES:
             values = [parent.traits.get(trait, 0.5) for parent in parents]
             inherited[trait] = min(1, max(0, sum(values) / len(values) + self._random.uniform(-0.12, 0.12)))
-        names = ["Tavi", "Suri", "Kori", "Luma", "Ravi", "Mira", "Oru", "Sena"]
         sex = self._random.choice(["male", "female"])
+        proposals = [(parent, mother.unborn_name_suggestions[parent.id]) for parent in parents
+                     if parent.id in mother.unborn_name_suggestions]
+        if proposals:
+            # Parent choices take precedence. A second proposal may change the final name.
+            naming_parent, chosen_name = self._random.choice(proposals)
+            naming_source = naming_parent.id
+        else:
+            # A birth must not disappear because the model had no turn to submit a name.
+            # The family convention combines the parents' names rather than drawing a random list name.
+            chosen_name = (mother.name[:2] + (father.name[-2:] if father else "ra")).capitalize()
+            naming_source = "family_convention"
+        existing_names = {person.name.casefold() for person in world.agents}
+        base_name = chosen_name
+        suffix = 2
+        while chosen_name.casefold() in existing_names:
+            chosen_name = f"{base_name}{suffix}"
+            suffix += 1
         child = Agent(
             id=str(uuid4()),
-            name=self._random.choice(names),
+            name=chosen_name,
             sex=sex,
+            name_status="final" if proposals else "provisional",
             age_days=0,
             x=mother.x,
             y=mother.y,
@@ -1265,7 +1343,41 @@ class SimulationEngine(ActivityRules):
         mother.last_birth_tick = world.tick
         mother.pregnancy_days_remaining = None
         mother.other_parent_id = None
-        self._record(world, EventSource.NATURAL, EventKind.BIRTH, f"{child.name} was born to {', '.join(p.name for p in parents)}.", [child.id, *[p.id for p in parents]], {"sex": sex, "inherited_traits": inherited, "complicated_birth": complicated_birth})
+        mother.unborn_name_suggestions.clear()
+        self._record(world, EventSource.NATURAL, EventKind.BIRTH, f"{child.name} was born to {', '.join(p.name for p in parents)}.", [child.id, *[p.id for p in parents]], {"sex": sex, "inherited_traits": inherited, "complicated_birth": complicated_birth, "named_by": naming_source})
+
+    def _name_child(self, world: WorldState, agent: Agent, action: AgentAction) -> str:
+        """Record a parent's own pre-birth naming choice; no spectator input is needed."""
+        target = next((person for person in world.agents if person.id == action.target_agent_id), None)
+        name = action.message.strip().capitalize()
+        if not name.isalpha() or not 2 <= len(name) <= 20:
+            return "A child's name must contain two to twenty letters."
+        if (target and target.alive and target.name_status == "provisional"
+                and agent.id in target.parent_ids and target.age_days <= 30):
+            if any(person.id != target.id and person.name.casefold() == name.casefold() for person in world.agents):
+                return "That name is already used in this family world."
+            old_name = target.name
+            target.name = name
+            target.name_status = "final"
+            self._remember(target, f"{agent.name} chose your name, {name}.")
+            self._remember(agent, f"You chose {name} as your child's name.")
+            self._record(world, EventSource.AGENT_ACTION, EventKind.RELATIONSHIP,
+                         f"{agent.name} named their newborn {name}.", [agent.id, target.id],
+                         {"action": "name_child", "old_name": old_name, "name": name})
+            return f"Named the child {name}."
+        mother = target
+        if (not mother or not mother.alive or mother.pregnancy_days_remaining is None
+                or agent.id not in {mother.id, mother.other_parent_id}):
+            return "There is no expected child for this parent to name."
+        if agent.id in mother.unborn_name_suggestions:
+            return "This parent already suggested a name."
+        mother.unborn_name_suggestions[agent.id] = name
+        self._remember(agent, f"You suggested the name {name} for the expected child.")
+        self._remember(mother, f"{agent.name} suggested the name {name} for the expected child.")
+        self._record(world, EventSource.AGENT_ACTION, EventKind.RELATIONSHIP,
+                     f"{agent.name} suggested naming their expected child {name}.",
+                     [agent.id, mother.id], {"action": "name_child", "name": name})
+        return f"Suggested the name {name}."
 
     def _advance_environment(self, world: WorldState) -> None:
         # Seasons and weather are lightweight world pressures, not a full climate model.
@@ -1556,11 +1668,20 @@ class SimulationEngine(ActivityRules):
         """Use local feasible opportunities only when inference fails; never fabricate consent or culture."""
         choices = self._ollama.action_choices(agent, world)
         safe = [action for action in choices if action.action not in {
-            "bond", "reproduce", "fight", "create_belief", "form_group", "join_group"
+            "bond", "reproduce", "name_child", "fight", "create_belief", "form_group", "join_group"
         }]
         if agent.last_action and agent.last_action.action == "communicate":
             safe = [action for action in safe if action.action != "communicate"] or safe
         return safe[0] if safe else AgentAction(action="rest", reason="No safe local opportunity")
+
+    def _prepare_social_action(self, world: WorldState, agent: Agent, action: AgentAction) -> AgentAction:
+        """Keep a chosen reunion as a physical journey rather than a remote social effect."""
+        if action.action != "visit":
+            return action
+        target = next((person for person in world.agents if person.id == action.target_agent_id and person.alive), None)
+        if not target or self._distance(agent, target) <= 1:
+            return action
+        return self._move_or_act(world, agent, target, "visit", f"Travel to spend time with {target.name}")
 
     def _prepare_resource_action(self, world: WorldState, agent: Agent, action: AgentAction) -> AgentAction:
         """Turn a resource choice into one sensible step when its target is farther away."""
@@ -1650,6 +1771,8 @@ class SimulationEngine(ActivityRules):
                              f"{person.name} ended a previous bond with {old_partner.name}.", [person.id, old_partner.id])
         first.bonded_partner_id = second.id
         second.bonded_partner_id = first.id
+        first.loneliness = max(0, first.loneliness - 30)
+        second.loneliness = max(0, second.loneliness - 30)
         self._adjust_relationship(first, second, 10)
         details = {"previous_partners": list(prior_partners)}
         self._record(world, EventSource.AGENT_ACTION, EventKind.RELATIONSHIP, f"{first.name} and {second.name} formed a mutual bond.", [first.id, second.id], details)
@@ -1667,6 +1790,7 @@ class SimulationEngine(ActivityRules):
         else:
             female.pregnancy_days_remaining = PREGNANCY_DAYS
             female.other_parent_id = male.id
+            female.unborn_name_suggestions.clear()
             self._adjust_relationship(female, male, 3)
             result = f"{female.name} became pregnant; birth is expected in about {PREGNANCY_DAYS} simulated days."
         affair = bool(female and result.startswith(f"{female.name} became pregnant")) and any(
@@ -1701,6 +1825,9 @@ class SimulationEngine(ActivityRules):
         scope = "family" if family else "internal" if same_group else "external"
         self._hurt(world, target, damage, f"injuries from a fight with {agent.name}", EventSource.AGENT_ACTION)
         agent.energy = max(0, agent.energy - 12)
+        target.fear = min(100, target.fear + 25)
+        target.stress = min(100, target.stress + 20)
+        agent.stress = min(100, agent.stress + 12)
         self._adjust_relationship(agent, target, -30)
         self._record(world, EventSource.AGENT_ACTION, EventKind.FIGHT, f"{agent.name} fought {target.name} and caused {damage} injury.", [agent.id, target.id], {"damage": damage, "scope": scope, "weapon": weapon.kind if weapon else None})
         return f"Fought {target.name}."
@@ -1859,6 +1986,8 @@ class SimulationEngine(ActivityRules):
             related_people = [person for person in world.agents if person.alive and self._is_related(person, agent)]
             for relative in related_people:
                 self._remember(relative, f"{agent.name}, your relative, died from {cause}. Their body remains nearby.")
+                relative.stress = min(100, relative.stress + 30)
+                relative.fear = min(100, relative.fear + 10)
             self._record(world, source, EventKind.DEATH, f"{agent.name} died at age {agent.age_years} from {cause}.", [agent.id], {"age_years": agent.age_years, **agent.death_details, "x": agent.x, "y": agent.y})
             # Keep a group's leadership attached to living members after a death.
             for group in world.groups:

@@ -7,8 +7,9 @@ export function describeWorldHit(hit, world, locateCell) {
     if (data.agentId) {
       const agent = world.agents.find((item) => item.id === data.agentId);
       if (!agent) return null;
-      return { title: agent.name, lines: [agent.alive ? `${Math.floor(agent.age_days / 365)} years · ${agent.sex}` : `Died from ${agent.death_cause || "an unrecorded cause"}`,
+      return { title: agent.name, lines: [agent.alive ? `${Math.floor(agent.age_days / 365)} years · ${agent.sex}${agent.name_status === "provisional" ? " · awaiting parent name" : ""}` : `Died from ${agent.death_cause || "an unrecorded cause"}`,
         `Health ${Math.round(agent.health)} · Hunger ${Math.round(agent.hunger)} · Thirst ${Math.round(agent.thirst)}`,
+        `Fear ${Math.round(agent.fear || 0)} · Stress ${Math.round(agent.stress || 0)} · Loneliness ${Math.round(agent.loneliness || 0)}`,
         `Action: ${(agent.last_action?.action || "observing").replaceAll("_", " ")}`, agent.last_result || "Click to inspect this person."] };
     }
     if (data.animalId) {

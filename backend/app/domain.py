@@ -77,6 +77,8 @@ ActionName = Literal[
     "build",
     "bond",
     "reproduce",
+    "name_child",
+    "visit",
     "fight",
     "form_group",
     "join_group",
@@ -183,6 +185,7 @@ class Agent(BaseModel):
     id: str
     name: str
     sex: Literal["male", "female"]
+    name_status: Literal["final", "provisional"] = "final"
     age_days: int = Field(default=20 * 365, ge=0)
     x: int
     y: int
@@ -209,6 +212,13 @@ class Agent(BaseModel):
     bonded_partner_id: str | None = None
     pregnancy_days_remaining: int | None = None
     other_parent_id: str | None = None
+    # Each parent may suggest a name before birth; these choices persist across restarts.
+    unborn_name_suggestions: dict[str, str] = Field(default_factory=dict)
+    fear: float = Field(default=0, ge=0, le=100)
+    stress: float = Field(default=0, ge=0, le=100)
+    loneliness: float = Field(default=0, ge=0, le=100)
+    last_social_tick: int = -1
+    mourned_ids: list[str] = Field(default_factory=list)
     # A partner may independently answer a proposal on a later turn; consent expires.
     family_offer: AgentAction | None = None
     family_offer_until_tick: int = -1
@@ -305,10 +315,10 @@ class WorldState(BaseModel):
     tick: int = 0
     # Scaled elapsed seconds within the current day; a decision never advances this clock.
     day_progress_seconds: float = Field(default=0, ge=0)
-    day_length_seconds: float = Field(default=60, ge=1, le=3600)
-    time_scale: float = Field(default=2, ge=1, le=16)
-    base_time_scale: float = Field(default=2, ge=1, le=16)
-    auto_accelerate: bool = True
+    day_length_seconds: float = Field(default=720 / 365, ge=1, le=3600)
+    time_scale: float = Field(default=1, ge=1, le=16)
+    base_time_scale: float = Field(default=1, ge=1, le=16)
+    auto_accelerate: bool = False
     running_elapsed_seconds: float = 0
     width: int = 12
     height: int = 8
@@ -343,7 +353,7 @@ class ModelChange(BaseModel):
 
 
 class SpeedChange(BaseModel):
-    time_scale: float = Field(default=2, ge=1, le=16)
+    time_scale: float = Field(default=1, ge=1, le=16)
     auto_accelerate: bool = False
 
 

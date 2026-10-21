@@ -223,7 +223,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
         agent = world.agents[0]
         self.engine._infect(world, agent, "food poisoning", EventSource.NATURAL)
         before = agent.health
-        self.engine._advance_time(world, elapsed_seconds=60)
+        self.engine._advance_time(world, elapsed_seconds=world.day_length_seconds)
         self.assertEqual(agent.disease_days, 1)
         self.assertLess(agent.health, before)
         self.engine._save()
