@@ -7,6 +7,11 @@ import { interpolateSurfacePosition } from "../src/surface-motion.js";
 import { WorldEffects } from "../src/world-effects.js";
 import { describeWorldHit } from "../src/world-inspection.js";
 
+test("spectator controls omit world summary, time scaling, and manual month stepping", async () => {
+  const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  assert.doesNotMatch(html, /id="world-summary"|id="speed-select"|id="step-button"/);
+});
+
 test("surface travel stays above the sphere across seams, poles and opposite directions", () => {
   for (const [start, end] of [
     [new Three.Vector3(10, 0, 0), new Three.Vector3(-10, 0, 0)],

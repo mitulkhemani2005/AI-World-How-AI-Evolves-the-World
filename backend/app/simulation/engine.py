@@ -73,6 +73,10 @@ class SimulationEngine(ActivityRules):
         # Older snapshots may contain per-person model choices; migrate them to one shared brain.
         # Always migrate legacy snapshots to the one supported shared model.
         self.state.global_model = settings.ollama_model
+        # The spectator clock is fixed at 1×; normalize any previously accelerated save.
+        self.state.time_scale = self.state.base_time_scale = 1
+        self.state.auto_accelerate = False
+        self.state.running_elapsed_seconds = 0
         for person in self.state.agents:
             person.model = self.state.global_model
             person.x = min(max(person.x, 0), self.state.width - 1)
@@ -400,9 +404,10 @@ class SimulationEngine(ActivityRules):
             return self.state.model_copy(deep=True)
 
     async def change_speed(self, speed: float, automatic: bool) -> WorldState:
+        """Keep legacy speed API clients compatible while holding the clock at 1×."""
         async with self._lock:
-            self.state.base_time_scale = self.state.time_scale = min(16, max(1, speed))
-            self.state.auto_accelerate = automatic
+            self.state.base_time_scale = self.state.time_scale = 1
+            self.state.auto_accelerate = False
             self.state.running_elapsed_seconds = 0
             self._save()
             return self.state.model_copy(deep=True)
@@ -430,7 +435,7 @@ class SimulationEngine(ActivityRules):
     async def _run_loop(self) -> None:
         """Keep executing actions until explicit pause; transient failures retry with backoff."""
         while True:
-            delay = max(0.35, self._tick_interval_seconds / math.sqrt(self.state.time_scale))
+            delay = max(0.35, self._tick_interval_seconds)
             await asyncio.sleep(delay)
             async with self._lock:
                 if not self.state.running:
@@ -454,10 +459,7 @@ class SimulationEngine(ActivityRules):
                 elapsed = max(0, current - (self._clock_at if self._clock_at is not None else current))
                 self._clock_at = current
                 self.state.running_elapsed_seconds += elapsed
-                if self.state.auto_accelerate:
-                    stages = int(self.state.running_elapsed_seconds / max(1, settings.auto_acceleration_seconds))
-                    self.state.time_scale = min(8, self.state.base_time_scale * 2 ** min(stages, 4))
-                # Roll back only a failed clock update so a partial day cannot be applied twice.
+                # Roll back only a failed clock update so a partial month cannot be applied twice.
                 checkpoint = self.state.model_copy(deep=True)
                 random_state = self._random.getstate()
                 try:

@@ -30,7 +30,7 @@ If Ollama is unavailable or a response is invalid, a recorded survival fallback 
 - Review age, health, hunger, thirst, energy, fear, stress, loneliness, disease, family, pregnancy, knowledge, temperament, last action, and recent memories. Adjust a living agent's biological stats from their inspector.
 - Every person uses `qwen2.5:0.5b` with independent identity and private history. Ollama requests all model layers on GPU, keeps Qwen resident, and retries allocation failures using RAM/CPU. The header reports actual GPU/CPU residency.
 - Drag a wildfire, storm, flood, drought, disease outbreak, or mishap from the event menu onto a location on the globe. Or click an event and then its location. Fire, rain clouds, flood waves, drought dust, outbreak particles, and mishaps animate there without pausing the world; equivalent natural events can occur without the spectator.
-- Run, pause, advance one month, or reset the world. At the default 1× speed, **one simulated month takes one real minute**, and 12 months make a year. The clock advances during inference; agents can make decisions throughout the month, limited by model latency. The spectator can explicitly select 2–16×. Urgent food, water, exhaustion, illness rest, and infant care can invoke a recorded physical survival reflex while inference waits. These reflexes consume real resources and never supply social consent. Pause discards late model results.
+- Run, pause, or reset the world. The world runs only at 1×: **one simulated month takes one real minute**, and 12 months make a year. The clock advances during inference; agents can make decisions throughout the month, limited by model latency. Urgent food, water, exhaustion, illness rest, and infant care can invoke a recorded physical survival reflex while inference waits. These reflexes consume real resources and never supply social consent. Pause discards late model results.
 - Open the life timeline to review agent work, births, deaths, and world events. Select All, Work, Newborns, or Deaths, then click an agent's entry to inspect them on the globe. Birth and death updates stay in the timeline instead of appearing as life-event pop-ups.
 - Start near the people and follow their movement. Use **People**, **Globe**, **+**, and **−** for camera control, or orbit and scroll directly. Action labels show physical work and pending intentions; the inspector explains results and decision sources.
 - Watch the globe's sunlight follow your computer's local clock. Simulation speed changes biology and action cadence independently of the local clock. Every action appears above its agent. Dead people remain visible on the ground until a nearby agent chooses to mourn or bury them.
@@ -104,9 +104,9 @@ Vite writes static production assets to `frontend/dist/`. Host those assets sepa
 - `GET /api/health` — API, Ollama, configured model readiness, and actual compute residency.
 - `GET /api/models` — the supported shared Qwen model and local availability.
 - `GET /api/world` — authoritative world snapshot, including retained event records.
-- `POST /api/world/tick` — manually advance one simulated month and collect one set of agent decisions.
+- `POST /api/world/tick` — legacy manual step endpoint; the spectator interface does not expose it.
 - `POST /api/world/run?interval_seconds=3` / `POST /api/world/pause` — start or stop autonomous simulation.
-- `PATCH /api/world/speed` — set `time_scale` (1–16) and `auto_accelerate`.
+- `PATCH /api/world/speed` — legacy compatibility endpoint; the simulation stays at 1×.
 - `POST /api/world/reset?seed=7` — start a fresh world.
 - `PATCH /api/world/model` — validate/apply the pinned shared Qwen model; other models are rejected.
 - `PATCH /api/agents/{agent_id}/state` — adjust an individual's health, hunger, thirst, or energy.

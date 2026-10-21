@@ -270,7 +270,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(result.json()["tick"], 1)
                 self.assertTrue((await client.post("/api/world/run")).json()["running"])
                 speed = await client.patch("/api/world/speed", json={"time_scale": 4, "auto_accelerate": False})
-                self.assertEqual(speed.json()["time_scale"], 4)
+                self.assertEqual(speed.json()["time_scale"], 1)
                 self.assertTrue(speed.json()["running"])
                 result = await client.post("/api/events", json={"kind": "storm", "x": 0, "y": 0})
                 self.assertTrue(result.json()["running"], "an intervention must never pause the world")

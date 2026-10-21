@@ -28,6 +28,17 @@ class FamilyClockAndMotiveTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("month_length_seconds", restored.model_dump())
         self.assertNotIn("day_length_seconds", restored.model_dump())
 
+    async def test_loading_an_accelerated_save_normalizes_the_world_to_one_x(self):
+        world = self.engine.state
+        world.time_scale = world.base_time_scale = 8
+        world.auto_accelerate = True
+        self.engine._save()
+
+        restored = SimulationEngine(str(self.engine._store.path))
+        self.assertEqual(restored.state.time_scale, 1)
+        self.assertEqual(restored.state.base_time_scale, 1)
+        self.assertFalse(restored.state.auto_accelerate)
+
     async def test_one_simulated_month_is_one_real_minute_at_default_speed(self):
         world = self.engine.state
         self.assertEqual(world.rules_version, 5)

@@ -52,9 +52,8 @@ body,.app-shell{background:#f4f5f1}
 .action-explanation{margin-top:12px;padding:10px;border-radius:6px;background:#eef2e9;color:#40503a;font-size:11px;line-height:1.5}
 .world-tooltip{position:absolute;z-index:12;width:248px;pointer-events:none;display:grid;gap:6px;padding:13px 15px;border:1px solid #cbd5c5;border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 10px 35px #263a2420;color:#344330;font-size:11px;line-height:1.4}
 .world-tooltip strong{text-transform:capitalize;font-size:13px}.world-tooltip[hidden]{display:none}.world-tooltip span{display:block;color:#5b6b54}
-.speed-picker{display:grid;gap:4px;margin-right:10px}.speed-picker span{font:8px var(--mono);letter-spacing:.1em;color:#738076}.speed-picker select{border:0;background:transparent;color:#3e5138;font-size:11px;max-width:120px}
 .world-scene.event-armed{cursor:crosshair}
-@media(max-width:950px){.world-state{display:none}.speed-picker{margin-right:0}.topbar{padding-left:14px;padding-right:14px}.model-picker{margin-right:0}.model-picker select{width:112px}}
+@media(max-width:950px){.world-state{display:none}.topbar{padding-left:14px;padding-right:14px}.model-picker{margin-right:0}.model-picker select{width:112px}}
 
 /* A persistent, filterable life record replaces short-lived birth/death pop-ups. */
 .world-timeline{position:absolute;z-index:9;right:20px;top:126px;bottom:34px;width:min(370px,calc(100vw - 32px));display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.97);box-shadow:0 20px 60px rgba(31,42,33,.18);backdrop-filter:blur(16px)}

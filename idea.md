@@ -93,7 +93,7 @@ The separate white-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
-- Advance biology from elapsed real running time, independently of model latency. At default 1×, one simulated month takes one real minute; explicit speeds up to 16× are available. Visible sunlight and the local clock follow the spectator's computer time; simulated year/month are displayed separately. Agents can make decisions throughout a biological day.
+- Advance biology from elapsed real running time at a fixed 1× rate, independently of model latency. One simulated month takes one real minute. Visible sunlight and the local clock follow the spectator's computer time; simulated year/month are displayed separately. Agents can make decisions throughout a simulated month.
 - Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
 - Keep dead bodies visible on the ground. Nearby relatives receive the death in their memories and decide whether to mourn, bury, or attend to other needs. Burial leaves a grave marker.
 - Give animals hardcoded NPC behavior for movement, feeding, watering, health, illness, reproduction, and death. Animals do not make LLM calls.
@@ -101,7 +101,7 @@ The separate white-themed frontend should let the spectator:
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.
 - Review a spectator timeline of agent work, newborns, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters. Click an agent's entry to open that person's life record on the globe.
-- Pause, resume, or advance one month. Only explicit pause stops a running world: interventions, extinction, and recoverable errors must not stop its clock or ecosystem. Persist the run/pause choice through backend restarts.
+- Run or pause the world. There is no manual time-step or speed control; the clock runs at a fixed 1× rate whenever the world is running. Only explicit pause stops a running world: interventions, extinction, and recoverable errors must not stop its clock or ecosystem. Persist the run/pause choice through backend restarts.
 - Hover world objects for details, animate events at their location, keep animals very small and secondary, without population counters, and protect the camera from entering terrain.
 - Let agents choose to restore habitat health, fertility, and resource cleanliness. Food wildlife replenishes according to suitable habitat under a small world-wide budget. Spawning and births use the same limits; excess animals migrate away instead of leaving carcass piles.
 - Start founders on adjacent habitable land; proximity enables interaction without forcing reproduction.

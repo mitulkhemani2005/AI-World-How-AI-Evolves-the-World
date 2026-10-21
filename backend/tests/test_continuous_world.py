@@ -66,18 +66,19 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(all(self.engine._terrain_at(world, animal.x, animal.y).kind != "ocean" for animal in world.animals))
 
 
-    async def test_auto_acceleration_and_fixed_speed(self):
+    async def test_clock_stays_at_one_x(self):
         world = self.engine.state
         self.engine._ollama.decide = AsyncMock(return_value=AgentAction(action="rest"))
         await self.engine.change_speed(2, True)
         world.running_elapsed_seconds = 240
         await self.engine.start()
         await asyncio.sleep(0.6)
-        self.assertEqual(world.time_scale, 8)
-        self.assertGreaterEqual(world.month_progress_seconds, 4, "eight-times speed advances about five simulated seconds")
+        self.assertEqual(world.time_scale, 1)
+        self.assertFalse(world.auto_accelerate)
+        self.assertLess(world.month_progress_seconds, 2)
         await self.engine.change_speed(4, False)
         await asyncio.sleep(0.6)
-        self.assertEqual(world.time_scale, 4)
+        self.assertEqual(world.time_scale, 1)
         self.assertFalse(world.auto_accelerate)
         self.assertTrue(world.running)
 

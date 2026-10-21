@@ -9,14 +9,13 @@ import "./styles.css";
 const $ = (selector) => document.querySelector(selector);
 const host = $("#world-scene");
 const apiBase = import.meta.env.VITE_API_BASE_URL || "";
-const ui = { clock: $("#clock-label"), model: $("#model-select"), run: $("#run-button"), step: $("#step-button"), inspector: $("#agent-inspector"), toast: $("#toast") };
+const ui = { clock: $("#clock-label"), model: $("#model-select"), run: $("#run-button"), inspector: $("#agent-inspector"), toast: $("#toast") };
 let worldWidth = 36;
 let worldHeight = 18;
 const globeRadius = 10;
 let world = null;
 let selectedAgentId = null;
 let currentWorldId = null;
-let isStepping = false;
 let timelineFilter = "all";
 let draggedEvent = null;
 let toastTimeout = null;
@@ -996,8 +995,6 @@ function renderWorld(next) {
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
-  $("#world-summary").textContent = [living + " people", "living wildlife", (world.crops?.length || 0) + " growing crops", world.season || "spring"].join(" · ");
-  if (document.activeElement !== $("#speed-select")) $("#speed-select").value = world.auto_accelerate ? "auto" : String(world.time_scale || 2);
   ui.run.textContent = world.running ? "Ⅱ" : "▶";
   ui.run.title = world.running ? "Pause the simulation" : "Run the simulation";
   syncObjects(world); renderInspector(); renderCulture(); renderTimeline();
@@ -1103,18 +1100,6 @@ ui.run.addEventListener("click", async () => {
     else await api("/api/world/run", { method: "POST" });
     await refreshWorld();
   } catch (error) { notify(error.message, true); }
-});
-$("#speed-select").addEventListener("change", async (event) => {
-  const automatic = event.target.value === "auto";
-  try { renderWorld(await api("/api/world/speed", { method: "PATCH", body: JSON.stringify({ time_scale: automatic ? 2 : Number(event.target.value), auto_accelerate: automatic }) })); }
-  catch (error) { notify(error.message, true); }
-});
-ui.step.addEventListener("click", async () => {
-  if (isStepping) return;
-  isStepping = true; ui.step.disabled = true;
-  try { renderWorld(await api("/api/world/tick", { method: "POST" })); }
-  catch (error) { notify(error.message, true); }
-  finally { isStepping = false; ui.step.disabled = false; }
 });
 ui.model.addEventListener("change", async () => {
   try { renderWorld(await api("/api/world/model", { method: "PATCH", body: JSON.stringify({ model: ui.model.value }) })); notify(`Shared model changed to ${ui.model.value}.`); }

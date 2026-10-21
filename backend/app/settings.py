@@ -15,7 +15,6 @@ class Settings:
     decision_interval_seconds = float(os.getenv("DECISION_INTERVAL_SECONDS", "1.2"))
     # Request all layers on GPU; a GPU allocation failure may retry once using RAM/CPU.
     ollama_gpu_layers = 999
-    auto_acceleration_seconds = float(os.getenv("AUTO_ACCELERATION_SECONDS", "120"))
     # One simulation month takes one real minute at the default 1x speed.
     # Accept the former variable during migration for existing local environments.
     month_length_seconds = float(os.getenv("MONTH_LENGTH_SECONDS", os.getenv("DAY_LENGTH_SECONDS", "60")))
