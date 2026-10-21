@@ -35,7 +35,7 @@ from app.simulation.rules import (
     FARMABLE_TERRAIN,
     FOOD_KINDS,
     MAX_POPULATION,
-    PREGNANCY_DAYS,
+    PREGNANCY_MONTHS,
     SHELTER_KINDS,
     TRAIT_NAMES,
     FAMILY_OFFER_DAYS,
@@ -88,34 +88,36 @@ class SimulationEngine(ActivityRules):
         self.state.processing = False
         if self.state.rules_version < 2:
             for person in self.state.agents:
-                if person.pregnancy_days_remaining is not None:
-                    person.pregnancy_days_remaining = math.ceil(person.pregnancy_days_remaining / 3)
+                if person.pregnancy_months_remaining is not None:
+                    person.pregnancy_months_remaining = math.ceil(person.pregnancy_months_remaining / 3)
             self.state.rules_version = 2
         if self.state.rules_version < 3:
-            # Keep the same fraction of the current day and pregnancy when upgrading
+            # Keep the same fraction of the current month and pregnancy when upgrading
             # a saved world. Preserve its identity, people, and run/pause choice.
-            previous_day = self.state.day_length_seconds
-            self.state.day_progress_seconds = min(
-                settings.day_length_seconds - 0.0001,
-                self.state.day_progress_seconds / previous_day * settings.day_length_seconds,
+            previous_day = self.state.month_length_seconds
+            self.state.month_progress_seconds = min(
+                settings.month_length_seconds - 0.0001,
+                self.state.month_progress_seconds / previous_day * settings.month_length_seconds,
             )
-            self.state.day_length_seconds = settings.day_length_seconds
+            self.state.month_length_seconds = settings.month_length_seconds
             self.state.time_scale = self.state.base_time_scale = 1
             self.state.auto_accelerate = False
             for person in self.state.agents:
-                if person.pregnancy_days_remaining is not None:
-                    person.pregnancy_days_remaining = max(1, math.ceil(person.pregnancy_days_remaining / 10))
+                if person.pregnancy_months_remaining is not None:
+                    person.pregnancy_months_remaining = max(1, math.ceil(person.pregnancy_months_remaining / 10))
             self.state.rules_version = 3
         if self.state.rules_version < 4:
-            # Upgrade existing saves to one real minute per day without replacing the
-            # world or moving its progress backward within the current simulated day.
-            previous_day = max(0.0001, self.state.day_length_seconds)
-            self.state.day_progress_seconds = min(
-                settings.day_length_seconds - 0.0001,
-                self.state.day_progress_seconds / previous_day * settings.day_length_seconds,
+            # Upgrade existing saves without replacing the world or losing month progress.
+            previous_day = max(0.0001, self.state.month_length_seconds)
+            self.state.month_progress_seconds = min(
+                settings.month_length_seconds - 0.0001,
+                self.state.month_progress_seconds / previous_day * settings.month_length_seconds,
             )
-            self.state.day_length_seconds = settings.day_length_seconds
+            self.state.month_length_seconds = settings.month_length_seconds
             self.state.rules_version = 4
+        if self.state.rules_version < 5:
+            # The elapsed-time unit is now called a month; keep progress and world state.
+            self.state.rules_version = 5
         for person in self.state.agents:
             if not person.alive and not person.death_details:
                 # Historical snapshots cannot identify a fatal blow that was never recorded.
@@ -131,10 +133,10 @@ class SimulationEngine(ActivityRules):
             id=str(uuid4()),
             seed=seed,
             global_model=settings.ollama_model,
-            rules_version=4,
+            rules_version=5,
             width=36,
             height=18,
-            day_length_seconds=settings.day_length_seconds,
+            month_length_seconds=settings.month_length_seconds,
             agents=[
                 Agent(
                     id="agent-1",
@@ -468,12 +470,12 @@ class SimulationEngine(ActivityRules):
                     self._report_error("An ecology update failed; the world is continuing and will retry.", exc)
                 self._save()
 
-    def _advance_time(self, world: WorldState, elapsed_seconds: float = 0, force_day: bool = False) -> None:
-        """All daily consequences share one clock; decision count never advances age."""
-        progress = world.day_progress_seconds + max(0, elapsed_seconds)
-        elapsed_days = 1 if force_day else int(progress // world.day_length_seconds)
-        world.day_progress_seconds = progress % world.day_length_seconds
-        for _ in range(elapsed_days):
+    def _advance_time(self, world: WorldState, elapsed_seconds: float = 0, force_month: bool = False) -> None:
+        """Advance one monthly simulation step; decision count never advances age."""
+        progress = world.month_progress_seconds + max(0, elapsed_seconds)
+        elapsed_months = 1 if force_month else int(progress // world.month_length_seconds)
+        world.month_progress_seconds = progress % world.month_length_seconds
+        for _ in range(elapsed_months):
             world.tick += 1
             self._advance_environment(world)
             self._regenerate_resources(world)
@@ -512,16 +514,16 @@ class SimulationEngine(ActivityRules):
             self._record_action(world, person, resolved, result, proposed_action=action if resolved.action != action.action else None)
 
     async def tick(self) -> WorldState:
-        """Manually advance one complete simulated day and resolve one decision round."""
+        """Manually advance one simulated month and resolve one decision round."""
         try:
-            return await self._tick_once(force_day=True)
+            return await self._tick_once(force_month=True)
         except Exception as exc:
             async with self._lock:
                 if self.state.processing:
                     self._report_error("A manual step failed; the world remains available.", exc)
             raise
 
-    async def _tick_once(self, elapsed_seconds: float = 0, force_day: bool = False) -> WorldState:
+    async def _tick_once(self, elapsed_seconds: float = 0, force_month: bool = False) -> WorldState:
         # Keep reads and spectator inspection responsive while slow model calls are in flight.
         async with self._tick_lock:
             async with self._lock:
@@ -534,7 +536,7 @@ class SimulationEngine(ActivityRules):
                     if person.crafting_project and not item_needed(world, person, person.crafting_project):
                         person.crafting_project = None
                         person.pending_action = None
-                self._advance_time(world, elapsed_seconds, force_day)
+                self._advance_time(world, elapsed_seconds, force_month)
                 world_id = world.id
                 decision_epoch = self._decision_epoch
                 observation_state = world.model_copy(deep=True)
@@ -1171,11 +1173,11 @@ class SimulationEngine(ActivityRules):
         return choices or [(x, y)]
 
     def _advance_biology(self, world: WorldState, agent: Agent) -> None:
-        """Advance body state once per simulated day; all ages use the same hazard rules."""
-        agent.age_days += 1
-        # The world clock is deliberately compressed to twelve real minutes per year.
+        """Advance body state one month; ages remain stored as biological days."""
+        agent.age_days += 30
+        # Twelve real minutes represent one simulated year at the default speed.
         # Scale short-term bodily pressure to elapsed real time so agents still have
-        # enough decision rounds to eat, drink and rest between simulated days.
+        # enough decision rounds to eat, drink, and rest within each simulation month.
         survival_pace = self._survival_pace(world)
         # Feelings persist between decisions and ease gradually in safer surroundings.
         agent.fear = max(0, agent.fear - 2 * survival_pace)
@@ -1233,13 +1235,13 @@ class SimulationEngine(ActivityRules):
                         if self._random.random() < spread_chance:
                             self._infect(world, other, agent.disease, EventSource.NATURAL)
 
-        if agent.pregnancy_days_remaining is not None:
-            agent.pregnancy_days_remaining -= 1
-            # Pregnancy imposes an actual care and nutrition burden in the short 9-day cycle.
+        if agent.pregnancy_months_remaining is not None:
+            agent.pregnancy_months_remaining -= 1
+            # Pregnancy imposes an actual care and nutrition burden in this 9-month cycle.
             agent.hunger = min(100, agent.hunger + 3 * survival_pace)
             agent.thirst = min(100, agent.thirst + 2 * survival_pace)
             agent.energy = max(0, agent.energy - 2 * survival_pace)
-            if agent.pregnancy_days_remaining <= 0:
+            if agent.pregnancy_months_remaining <= 0:
                 self._give_birth(world, agent)
         if agent.age_days > 45 * 365:
             # Age raises risk gradually; other hazards can still kill at any age.
@@ -1255,9 +1257,8 @@ class SimulationEngine(ActivityRules):
     @staticmethod
     def _survival_pace(world: WorldState) -> float:
         """Scale needs and recurring exposure by real-time pace, not accelerated game days."""
-        # At sixty seconds/day, body rates remain one full unit per simulated day. At the
-        # default twelve-minute/year clock, they slow proportionally while aging still advances.
-        return min(1.0, max(0.001, world.day_length_seconds / (60 * max(1, world.time_scale))))
+        # Needs are scaled to elapsed real time; monthly aging still follows the simulation clock.
+        return min(1.0, max(0.001, world.month_length_seconds / (60 * max(1, world.time_scale))))
 
     def _share_food_with_dependents(self, world: WorldState, parent: Agent, node: ResourceNode) -> None:
         """Consume one extra gathered unit to reduce hunger for a nearby child."""
@@ -1301,10 +1302,10 @@ class SimulationEngine(ActivityRules):
         # Death does not erase lineage or the other parent's inherited traits.
         father = next((person for person in world.agents if person.id == mother.other_parent_id), None)
         if not mother.alive:
-            mother.pregnancy_days_remaining = None
+            mother.pregnancy_months_remaining = None
             return
         if sum(person.alive for person in world.agents) >= MAX_POPULATION:
-            mother.pregnancy_days_remaining = None
+            mother.pregnancy_months_remaining = None
             mother.other_parent_id = None
             self._record(world, EventSource.SYSTEM, EventKind.POPULATION_LIMIT, "A birth did not occur because the world reached its population limit.", [mother.id], {"population_limit": MAX_POPULATION})
             return
@@ -1364,7 +1365,7 @@ class SimulationEngine(ActivityRules):
             child.relationship_scores[parent.id] = 50
         world.agents.append(child)
         mother.last_birth_tick = world.tick
-        mother.pregnancy_days_remaining = None
+        mother.pregnancy_months_remaining = None
         mother.other_parent_id = None
         mother.unborn_name_suggestions.clear()
         self._record(world, EventSource.NATURAL, EventKind.BIRTH, f"{child.name} was born to {', '.join(p.name for p in parents)}.", [child.id, *[p.id for p in parents]], {"sex": sex, "inherited_traits": inherited, "complicated_birth": complicated_birth, "named_by": naming_source})
@@ -1389,7 +1390,7 @@ class SimulationEngine(ActivityRules):
                          {"action": "name_child", "old_name": old_name, "name": name})
             return f"Named the child {name}."
         mother = target
-        if (not mother or not mother.alive or mother.pregnancy_days_remaining is None
+        if (not mother or not mother.alive or mother.pregnancy_months_remaining is None
                 or agent.id not in {mother.id, mother.other_parent_id}):
             return "There is no expected child for this parent to name."
         if agent.id in mother.unborn_name_suggestions:
@@ -1404,8 +1405,8 @@ class SimulationEngine(ActivityRules):
 
     def _advance_environment(self, world: WorldState) -> None:
         # Seasons and weather are lightweight world pressures, not a full climate model.
-        day_of_year = world.tick % 365
-        world.season = ("spring", "summer", "autumn", "winter")[min(3, day_of_year // 91)]
+        month_of_year = world.tick % 12
+        world.season = ("spring", "summer", "autumn", "winter")[month_of_year // 3]
         if self._random.random() < 0.08:
             world.weather = self._random.choice(("clear", "rain", "heat", "cold", "wind"))
         if world.weather == "heat":
@@ -1528,7 +1529,8 @@ class SimulationEngine(ActivityRules):
             elif plot.moisture < 12:
                 plot.condition = max(0, plot.condition - 4)
             else:
-                plot.growth_days += 1 if world.season in {"spring", "summer"} else 0
+                # Growth is stored in days internally; one favorable simulation month adds 30.
+                plot.growth_days += 30 if world.season in {"spring", "summer"} else 0
                 if world.weather == "drought":
                     plot.condition = max(0, plot.condition - 3)
 
@@ -1536,7 +1538,7 @@ class SimulationEngine(ActivityRules):
         """Run deterministic NPC needs, movement, illness, reproduction, and mortality."""
         living = [animal for animal in world.animals if animal.alive]
         for animal in living:
-            animal.age_days += 1
+            animal.age_days += 30
             cell = self._terrain_at(world, animal.x, animal.y)
             if animal.animal_type == "wild":
                 grazing_biome = cell and cell.kind in {"grassland", "plains", "farmland", "forest", "rainforest", "boreal_forest"}
@@ -1811,11 +1813,11 @@ class SimulationEngine(ActivityRules):
         elif self._distance(female, male) > 1:
             result = "The two people were too far apart."
         else:
-            female.pregnancy_days_remaining = PREGNANCY_DAYS
+            female.pregnancy_months_remaining = PREGNANCY_MONTHS
             female.other_parent_id = male.id
             female.unborn_name_suggestions.clear()
             self._adjust_relationship(female, male, 3)
-            result = f"{female.name} became pregnant; birth is expected in about {PREGNANCY_DAYS} simulated days."
+            result = f"{female.name} became pregnant; birth is expected in about {PREGNANCY_MONTHS} simulated months."
         affair = bool(female and result.startswith(f"{female.name} became pregnant")) and any(
             person.bonded_partner_id not in (None, partner.id)
             for person, partner in ((first, second), (second, first))

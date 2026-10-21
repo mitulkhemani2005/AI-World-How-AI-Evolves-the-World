@@ -7,7 +7,7 @@ import test_world as fixtures
 from app.agent_brain.ollama_client import OllamaClient
 from app.domain import AgentAction, Animal, CraftedItem, EventKind, Structure
 from app.simulation.planning import material_stock
-from app.simulation.rules import PREGNANCY_DAYS
+from app.simulation.rules import PREGNANCY_MONTHS
 from app.simulation.engine import SimulationEngine
 
 
@@ -18,7 +18,7 @@ class SettlementTests(unittest.IsolatedAsyncioTestCase):
     async def test_fatal_damage_records_specific_cause_and_snapshot(self):
         world = self.engine.state
         # This unit test exercises one full biological day at normal time scale.
-        world.day_length_seconds = 60
+        world.month_length_seconds = 60
         person = world.agents[0]
         for cause, hunger, thirst, disease in (("starvation", 100, 0, None), ("dehydration", 0, 100, None),
                                               ("food poisoning", 0, 0, "food poisoning")):
@@ -34,8 +34,8 @@ class SettlementTests(unittest.IsolatedAsyncioTestCase):
         world = self.engine.state
         first, second = world.agents
         self.engine._resolve_reproduction(world, first, second)
-        self.assertEqual(PREGNANCY_DAYS, 9)
-        self.assertEqual(second.pregnancy_days_remaining, 9)
+        self.assertEqual(PREGNANCY_MONTHS, 9)
+        self.assertEqual(second.pregnancy_months_remaining, 9)
         for _ in range(9):
             second.hunger = second.thirst = 0
             second.energy, second.health, second.disease = 80, 100, None
@@ -166,14 +166,14 @@ class SettlementTests(unittest.IsolatedAsyncioTestCase):
         world = self.engine.state
         world.rules_version = 1
         world.running = True
-        world.agents[1].pregnancy_days_remaining = 180
+        world.agents[1].pregnancy_months_remaining = 180
         self.engine._save()
         restored = SimulationEngine(str(self.engine._store.path))
         self.assertEqual(restored.state.id, world.id)
         self.assertTrue(restored.state.running)
-        self.assertEqual(restored.state.agents[1].pregnancy_days_remaining, 6)
+        self.assertEqual(restored.state.agents[1].pregnancy_months_remaining, 6)
         restored = SimulationEngine(str(self.engine._store.path))
-        self.assertEqual(restored.state.agents[1].pregnancy_days_remaining, 6)
+        self.assertEqual(restored.state.agents[1].pregnancy_months_remaining, 6)
 
     async def test_model_chosen_exploration_continues_through_boarding_sailing_and_landing(self):
         world = self.engine.state

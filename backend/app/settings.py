@@ -16,9 +16,9 @@ class Settings:
     # Request all layers on GPU; a GPU allocation failure may retry once using RAM/CPU.
     ollama_gpu_layers = 999
     auto_acceleration_seconds = float(os.getenv("AUTO_ACCELERATION_SECONDS", "120"))
-    # One biological day takes one real minute at the default 1x speed.
-    # Higher spectator speeds shorten days while survival pressure tracks real time.
-    day_length_seconds = float(os.getenv("DAY_LENGTH_SECONDS", "60"))
+    # One simulation month takes one real minute at the default 1x speed.
+    # Accept the former variable during migration for existing local environments.
+    month_length_seconds = float(os.getenv("MONTH_LENGTH_SECONDS", os.getenv("DAY_LENGTH_SECONDS", "60")))
     natural_event_probability = float(os.getenv("NATURAL_EVENT_PROBABILITY", "0.01"))
     disease_emergence_probability = float(os.getenv("DISEASE_EMERGENCE_PROBABILITY", "0.002"))
     max_saved_events = int(os.getenv("MAX_SAVED_EVENTS", "1000"))

@@ -1,7 +1,7 @@
 """Shared constants for agent decisions and authoritative world validation."""
 
 ADULT_AGE_DAYS = 16 * 365
-PREGNANCY_DAYS = 9
+PREGNANCY_MONTHS = 9
 MAX_POPULATION = 128
 # Keep wildlife a modest renewable food source instead of filling every terrain cell.
 MAX_WILD_ANIMALS = 24
@@ -41,12 +41,12 @@ def reproduction_block(world, first, second) -> str | None:
             or bool(set(first.parent_ids) & set(second.parent_ids))):
         return "Close biological relatives cannot reproduce together."
     mother = first if first.sex == "female" else second
-    if mother.pregnancy_days_remaining is not None:
+    if mother.pregnancy_months_remaining is not None:
         return f"{mother.name} is already pregnant."
     if world.tick - mother.last_birth_tick < POSTPARTUM_DAYS:
         return f"{mother.name} needs recovery time after giving birth."
     if sum(person.alive for person in world.agents) + sum(
-        person.alive and person.pregnancy_days_remaining is not None for person in world.agents) >= MAX_POPULATION:
+        person.alive and person.pregnancy_months_remaining is not None for person in world.agents) >= MAX_POPULATION:
         return "The world has reached its population limit."
     if min(first.health, second.health) < 45 or max(first.hunger, second.hunger, first.thirst, second.thirst) >= 75:
         return "Their health or immediate needs made reproduction unsafe."

@@ -751,7 +751,7 @@ function syncObjects(nextWorld) {
     const action = agent.last_action?.action?.replaceAll("_", " ");
     const intention = agent.pending_action?.action?.replaceAll("_", " ");
     label.textContent = agent.alive
-      ? `${agent.name} · ${action || "observing"}${intention && intention !== action ? ` → ${intention}` : ""}${agent.pregnancy_days_remaining != null ? ` · expecting (${agent.pregnancy_days_remaining}d)` : ""}`
+      ? `${agent.name} · ${action || "observing"}${intention && intention !== action ? ` → ${intention}` : ""}${agent.pregnancy_months_remaining != null ? ` · expecting (${agent.pregnancy_months_remaining}mo)` : ""}`
       : agent.buried ? `${agent.name} · buried` : `${agent.name} · deceased`;
     label.classList.toggle("selected", agent.id === selectedAgentId);
     label.classList.toggle("dead", !agent.alive);
@@ -933,7 +933,8 @@ function renderInspector() {
   if (!agent) { ui.inspector.classList.remove("visible"); ui.inspector.innerHTML = '<div class="inspector-empty"><span class="eyebrow">LIFE RECORD</span><p>Select a person in the land to see their story.</p></div>'; return; }
   ui.inspector.classList.add("visible");
   if (ui.inspector.contains(document.activeElement)) return;
-  const age = agent.age_days < 365 ? `${agent.age_days} days` : `${Math.floor(agent.age_days / 365)} years`;
+  const ageMonths = Math.floor(agent.age_days / 30);
+  const age = ageMonths < 12 ? `${ageMonths} months` : `${Math.floor(ageMonths / 12)} years, ${ageMonths % 12} months`;
   const namesFor = (ids) => ids.map((id) => world.agents.find((person) => person.id === id)?.name || "Unknown").join(", ") || "None";
   const partner = world.agents.find((person) => person.id === agent.bonded_partner_id);
   const traits = Object.entries(agent.traits || {}).map(([name, score]) => `${name} ${Math.round(score * 100)}`).join(" · ") || "Not developed";
@@ -951,7 +952,7 @@ function renderInspector() {
     <div class="condition ${agent.alive ? "" : "dead"}">${escapeHtml(condition.toUpperCase())}</div>
     ${statBar("health", agent.health, true)}${statBar("hunger", agent.hunger)}${statBar("thirst", agent.thirst)}${statBar("energy", agent.energy, true)}${statBar("fear", agent.fear || 0)}${statBar("stress", agent.stress || 0)}${statBar("loneliness", agent.loneliness || 0)}
     <form class="edit-form" id="edit-agent"><div class="edit-title">SPECTATOR ADJUSTMENT</div><div class="edit-grid">${["health", "hunger", "thirst", "energy"].map((key) => `<div class="edit-field"><label for="edit-${key}">${key}</label><input id="edit-${key}" name="${key}" type="number" min="0" max="100" value="${Math.round(agent[key])}" ${agent.alive ? "" : "disabled"}/></div>`).join("")}</div><button class="small-action" type="submit" ${agent.alive ? "" : "disabled"}>Apply changes</button></form>
-    <div class="detail-list"><div class="detail-line"><span>Parents</span><span>${escapeHtml(namesFor(agent.parent_ids || []))}</span></div><div class="detail-line"><span>Children</span><span>${escapeHtml(namesFor(agent.children_ids || []))}</span></div><div class="detail-line"><span>Bond</span><span>${escapeHtml(partner?.name || "None")}</span></div><div class="detail-line"><span>Connections</span><span>${escapeHtml(connections)}</span></div><div class="detail-line"><span>Pregnancy</span><span>${agent.pregnancy_days_remaining == null ? "No" : `${agent.pregnancy_days_remaining} days`}</span></div>${agent.name_status === "provisional" ? '<div class="detail-line"><span>Name</span><span>Awaiting parent choice</span></div>' : ""}<div class="detail-line"><span>Expected child's names</span><span>${escapeHtml(Object.values(agent.unborn_name_suggestions || {}).join(", ") || "Not chosen")}</span></div><div class="detail-line"><span>Knowledge</span><span>${(agent.knowledge || []).length} learned</span></div><div class="detail-line"><span>Temperament</span><span>${escapeHtml(traits)}</span></div><div class="detail-line"><span>Last action</span><span>${escapeHtml(agent.last_action?.action?.replaceAll("_", " ") || "Observing")}</span></div></div>
+    <div class="detail-list"><div class="detail-line"><span>Parents</span><span>${escapeHtml(namesFor(agent.parent_ids || []))}</span></div><div class="detail-line"><span>Children</span><span>${escapeHtml(namesFor(agent.children_ids || []))}</span></div><div class="detail-line"><span>Bond</span><span>${escapeHtml(partner?.name || "None")}</span></div><div class="detail-line"><span>Connections</span><span>${escapeHtml(connections)}</span></div><div class="detail-line"><span>Pregnancy</span><span>${agent.pregnancy_months_remaining == null ? "No" : `${agent.pregnancy_months_remaining} months`}</span></div>${agent.name_status === "provisional" ? '<div class="detail-line"><span>Name</span><span>Awaiting parent choice</span></div>' : ""}<div class="detail-line"><span>Expected child's names</span><span>${escapeHtml(Object.values(agent.unborn_name_suggestions || {}).join(", ") || "Not chosen")}</span></div><div class="detail-line"><span>Knowledge</span><span>${(agent.knowledge || []).length} learned</span></div><div class="detail-line"><span>Temperament</span><span>${escapeHtml(traits)}</span></div><div class="detail-line"><span>Last action</span><span>${escapeHtml(agent.last_action?.action?.replaceAll("_", " ") || "Observing")}</span></div></div>
     <ul class="memories">${memories.length ? memories.map((memory) => `<li>${escapeHtml(memory)}</li>`).join("") : "<li>No memories yet.</li>"}</ul></div>`;
   const biome = terrainAt(agent.x, agent.y);
   const habitat = document.createElement("div");
@@ -963,7 +964,7 @@ function renderInspector() {
   explanation.textContent = [agent.last_action?.reason, agent.last_result,
     !agent.alive && agent.death_details ? `Death report: ${agent.death_cause || "unrecorded cause"}. Hunger ${Math.round(agent.death_details.hunger ?? agent.hunger)}, thirst ${Math.round(agent.death_details.thirst ?? agent.thirst)}, energy ${Math.round(agent.death_details.energy ?? agent.energy)}. ${agent.death_details.disease || ""} ${agent.death_details.attribution || ""}` : "",
     agent.family_offer && agent.family_offer_until_tick >= world.tick ? `Family proposal: ${agent.family_offer.action} · waiting for an answer` : "",
-    agent.pregnancy_days_remaining != null ? `Birth in about ${Math.ceil((agent.pregnancy_days_remaining * (world.day_length_seconds || 60) - (world.day_progress_seconds || 0)) / (world.time_scale || 1))} real seconds at current speed` : "",
+    agent.pregnancy_months_remaining != null ? `Birth in about ${Math.ceil((agent.pregnancy_months_remaining * (world.month_length_seconds || 60) - (world.month_progress_seconds || 0)) / (world.time_scale || 1))} real seconds at current speed` : "",
     agent.construction_project ? `Project: ${agent.construction_project.replaceAll("_", " ")}` : "",
     agent.decision_source ? `Decision: ${agent.decision_source}${agent.intention_source ? ` (${agent.intention_source} intention)` : ""}` : ""].filter(Boolean).join(" · ");
   ui.inspector.querySelector(".detail-list")?.after(explanation);
@@ -983,15 +984,15 @@ function renderCulture() {
   $("#culture-count").textContent = String(groups.length + beliefs.length + structures.length);
   const block = (title, values, count = true) => `<div class="culture-block"><h4>${title}${count ? ` · ${values.length}` : ""}</h4><div class="chip-list">${values.length ? values.map((value) => `<span class="chip">${escapeHtml(value)}</span>`).join("") : '<span class="chip">None yet</span>'}</div></div>`;
   $("#culture-popover").innerHTML = `<h3>World culture</h3>${block("Structures", structures.map((item) => item.kind.replaceAll("_", " ")))}${block("Groups", groups.map((item) => `${item.name} · ${item.kind} · ${item.member_ids.length}`))}${block("Beliefs", beliefs.map((item) => `${item.name} · ${item.kind}`))}`;
-  $("#culture-popover").insertAdjacentHTML("beforeend", block("Wildlife · NPC", [...new Set(animals.filter((item) => item.alive).map((item) => `${item.species} · ${item.animal_type}`))], false) + block("Growing crops", crops.map((item) => `${item.crop_kind} · ${item.growth_days} days · ${Math.round(item.moisture)}% moisture`)));
+  $("#culture-popover").insertAdjacentHTML("beforeend", block("Wildlife · NPC", [...new Set(animals.filter((item) => item.alive).map((item) => `${item.species} · ${item.animal_type}`))], false) + block("Growing crops", crops.map((item) => `${item.crop_kind} · ${Math.ceil(item.growth_days / 30)} months growing · ${Math.round(item.moisture)}% moisture`)));
 }
 
 function renderWorld(next) {
   world = next;
-  const year = Math.floor(world.tick / 365) + 1; const day = (world.tick % 365) + 1;
+  const year = Math.floor(world.tick / 12) + 1; const month = (world.tick % 12) + 1;
   const living = world.agents.filter((agent) => agent.alive).length;
   const localTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · DAY ${day} · ${world.time_scale || 1}×${world.processing ? " · THINKING" : ""}`;
+  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · MONTH ${month} · ${world.time_scale || 1}×${world.processing ? " · THINKING" : ""}`;
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
@@ -1023,13 +1024,13 @@ function renderTimeline() {
     const actors = actorIds.map((id) => people.get(id)?.name).filter(Boolean);
     const firstAgentId = actorIds.find((id) => people.has(id));
     const tick = Math.max(0, Number(event.tick) || 0);
-    const year = Math.floor(tick / 365) + 1;
-    const day = tick % 365 + 1;
+    const year = Math.floor(tick / 12) + 1;
+    const month = tick % 12 + 1;
     const category = event.kind === "action" ? (event.details?.action || "work").replaceAll("_", " ")
       : (event.kind || "world event").replaceAll("_", " ");
     const actorLabel = actors.length ? actors.join(" · ") : "World";
     const content = escapeHtml(event.message || category);
-    const meta = `${escapeHtml(actorLabel)} · ${escapeHtml(category)} · Y${year} D${day}`;
+    const meta = `${escapeHtml(actorLabel)} · ${escapeHtml(category)} · Y${year} M${month}`;
     const tag = `<span class="timeline-kind kind-${escapeHtml(event.kind || "event")}">${escapeHtml(category)}</span>`;
     return firstAgentId
       ? `<button class="timeline-item" data-timeline-agent="${escapeHtml(firstAgentId)}">${tag}<p>${content}</p><small>${meta}</small></button>`

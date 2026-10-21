@@ -78,7 +78,7 @@ async function loadWorldApp(forceFallback = false) {
     hunger: 15, thirst: 15, energy: 85, alive: true, buried: false, traits: {}, memories: [],
     knowledge: [], parent_ids: [], children_ids: [], last_action: { action: "gather", reason: "Collect wood for shelter" } });
   const world = {
-    id: "runtime-world", width: 36, height: 18, tick: 0, day_progress_seconds: 0, day_length_seconds: 60,
+    id: "runtime-world", width: 36, height: 18, tick: 0, month_progress_seconds: 0, month_length_seconds: 60,
     global_model: "qwen2.5:0.5b", running: true, weather: "clear", season: "spring", groups: [], beliefs: [],
     agents: [agent("Aru", 17, "male"), agent("Nima", 18, "female")],
     terrain: Array.from({ length: 648 }, (_, index) => ({ x: index % 36, y: Math.floor(index / 36), kind: "forest", elevation: 0.2 })),

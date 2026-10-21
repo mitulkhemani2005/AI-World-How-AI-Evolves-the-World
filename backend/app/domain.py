@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
 
 class EventSource(str, Enum):
@@ -210,7 +210,11 @@ class Agent(BaseModel):
     inventory: dict[str, int] = Field(default_factory=dict)
     relationship_scores: dict[str, float] = Field(default_factory=dict)
     bonded_partner_id: str | None = None
-    pregnancy_days_remaining: int | None = None
+    # Legacy snapshots stored this monthly countdown under a day-based property name.
+    pregnancy_months_remaining: int | None = Field(
+        default=None,
+        validation_alias=AliasChoices("pregnancy_months_remaining", "pregnancy_days_remaining"),
+    )
     other_parent_id: str | None = None
     # Each parent may suggest a name before birth; these choices persist across restarts.
     unborn_name_suggestions: dict[str, str] = Field(default_factory=dict)
@@ -243,7 +247,8 @@ class Agent(BaseModel):
 
     @property
     def age_years(self) -> float:
-        return round(self.age_days / 365, 1)
+        # The simulation calendar advances in 30-day months and 12-month years.
+        return round(self.age_days / 360, 1)
 
 
 class Structure(BaseModel):
@@ -313,9 +318,16 @@ class WorldState(BaseModel):
     # One world-wide brain model is used by every independent person.
     global_model: str = "qwen2.5:0.5b"
     tick: int = 0
-    # Scaled elapsed seconds within the current day; a decision never advances this clock.
-    day_progress_seconds: float = Field(default=0, ge=0)
-    day_length_seconds: float = Field(default=60, ge=1, le=3600)
+    # A monthly world step advances on elapsed time, independently from agent decisions.
+    # Legacy aliases keep existing SQLite snapshots loadable after this calendar rename.
+    month_progress_seconds: float = Field(
+        default=0, ge=0,
+        validation_alias=AliasChoices("month_progress_seconds", "day_progress_seconds"),
+    )
+    month_length_seconds: float = Field(
+        default=60, ge=1, le=3600,
+        validation_alias=AliasChoices("month_length_seconds", "day_length_seconds"),
+    )
     time_scale: float = Field(default=1, ge=1, le=16)
     base_time_scale: float = Field(default=1, ge=1, le=16)
     auto_accelerate: bool = False

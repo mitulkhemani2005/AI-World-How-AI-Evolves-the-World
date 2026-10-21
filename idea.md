@@ -93,7 +93,7 @@ The separate white-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
-- Advance biology from elapsed real running time, independently of model latency. At default 1×, one simulated day takes one real minute; explicit speeds up to 16× are available. Visible sunlight and the local clock follow the spectator's computer time; simulated year/day are displayed separately. Agents can make decisions throughout a biological day.
+- Advance biology from elapsed real running time, independently of model latency. At default 1×, one simulated month takes one real minute; explicit speeds up to 16× are available. Visible sunlight and the local clock follow the spectator's computer time; simulated year/month are displayed separately. Agents can make decisions throughout a biological day.
 - Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
 - Keep dead bodies visible on the ground. Nearby relatives receive the death in their memories and decide whether to mourn, bury, or attend to other needs. Burial leaves a grave marker.
 - Give animals hardcoded NPC behavior for movement, feeding, watering, health, illness, reproduction, and death. Animals do not make LLM calls.
@@ -101,7 +101,7 @@ The separate white-themed frontend should let the spectator:
 - Observe communication, teaching, family life, and the spread of ideas.
 - See buildings, resources, hazards, groups, and property.
 - Review a spectator timeline of agent work, newborns, deaths, illness, recovery, conflict, discoveries, beliefs, construction, and disasters. Click an agent's entry to open that person's life record on the globe.
-- Pause, resume, or advance one day. Only explicit pause stops a running world: interventions, extinction, and recoverable errors must not stop its clock or ecosystem. Persist the run/pause choice through backend restarts.
+- Pause, resume, or advance one month. Only explicit pause stops a running world: interventions, extinction, and recoverable errors must not stop its clock or ecosystem. Persist the run/pause choice through backend restarts.
 - Hover world objects for details, animate events at their location, keep animals very small and secondary, without population counters, and protect the camera from entering terrain.
 - Let agents choose to restore habitat health, fertility, and resource cleanliness. Food wildlife replenishes according to suitable habitat under a small world-wide budget. Spawning and births use the same limits; excess animals migrate away instead of leaving carcass piles.
 - Start founders on adjacent habitable land; proximity enables interaction without forcing reproduction.
@@ -144,7 +144,7 @@ The current delivery and the remaining work for these stages are tracked in [imp
 
 ## Family and food ecology revision
 
-Family planning must remain visible among feasible choices after immediate survival needs are met. Agents can approach partners and exchange persistent, expiring proposals instead of requiring identical choices in one decision round. Both adults still independently agree. Physical survival responses can meet urgent needs while the shared model is busy; they never fabricate consent or resources. The current compressed pregnancy takes 9 biological days and postpartum recovery takes 120 days. Infants travel with a living caregiver and learn later.
+Family planning must remain visible among feasible choices after immediate survival needs are met. Agents can approach partners and exchange persistent, expiring proposals instead of requiring identical choices in one decision round. Both adults still independently agree. Physical survival responses can meet urgent needs while the shared model is busy; they never fabricate consent or resources. The current compressed pregnancy takes 9 simulation months. Infants travel with a living caregiver and learn later.
 
 Animals are small NPC food sources, secondary to the people. Healthy habitat determines the wildlife budget, capped at 24 wild animals; kept animals use a separate sustainable settlement allowance capped at 24. Natural spawning, reproduction, and migration enforce these budgets.
 
@@ -153,6 +153,6 @@ Animals are small NPC food sources, secondary to the people. Healthy habitat det
 - Every death must explain its recorded cause. New fatal damage is attributed immediately, with biological state and damage context retained. Old incomplete records remain labelled as historical attribution.
 - Creating an item or building gives creator credit, while practical use is shared. Families and groups can pool nearby materials. People can disagree, refuse a handover, or fight within a family, within a group, or with outsiders.
 - Building requires a suitable dry site. Farming requires fertile open ground with moisture. Shared shelter capacity, nearby food, crops and existing structures determine practical demand. Repair useful objects before building duplicates.
-- The latest chosen pregnancy duration is 9 biological days. Existing pregnancies from the old 90-day rule migrate proportionally once, preserving the current world. The condensed duration is a deliberate simulation rule, not a claim about hominin biology. Parents can suggest a name before birth; sex is sampled independently. If model latency prevents naming in time, a parent-derived provisional name is used at birth and a parent can choose a lasting name afterward.
+- The latest chosen pregnancy duration is 9 simulation months. Existing pregnancy countdowns migrate proportionally once, preserving the current world. The condensed duration is a deliberate simulation rule, not a claim about hominin biology. Parents can suggest a name before birth; sex is sampled independently. If model latency prevents naming in time, a parent-derived provisional name is used at birth and a parent can choose a lasting name afterward.
 - Agents can discover raft and weapon techniques by experimenting with real materials, teach them, craft shared tools, and learn by using them. Rafts carry up to four people, cross water through explicit sailing, and remain available at a landing. There is no teleportation across oceans.
 - Predators create a natural survival pressure. People can flee, equip weapons and defend themselves or children. Shelter, fire and weapons affect encounters. Predator births and spawning remain bounded by wildlife capacity and a two-predator limit.

@@ -26,7 +26,7 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({first.sex, second.sex}, {"male", "female"})
             self.assertTrue(all(person.age_days >= 18 * 365 for person in world.agents))
             self.assertTrue(all(self.engine._terrain_at(world, person.x, person.y).kind != "ocean" for person in world.agents))
-            self.assertIsNone(second.pregnancy_days_remaining, "proximity does not force reproduction")
+            self.assertIsNone(second.pregnancy_months_remaining, "proximity does not force reproduction")
 
 
     async def test_terrain_care(self):
@@ -74,7 +74,7 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
         await self.engine.start()
         await asyncio.sleep(0.6)
         self.assertEqual(world.time_scale, 8)
-        self.assertGreaterEqual(world.day_progress_seconds, 4, "eight-times speed advances about five simulated seconds")
+        self.assertGreaterEqual(world.month_progress_seconds, 4, "eight-times speed advances about five simulated seconds")
         await self.engine.change_speed(4, False)
         await asyncio.sleep(0.6)
         self.assertEqual(world.time_scale, 4)
@@ -86,7 +86,7 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
         world = self.engine.state
         for person in world.agents:
             person.alive = False
-        world.day_length_seconds = 1
+        world.month_length_seconds = 1
         await self.engine.start(0.5)
         await asyncio.sleep(1.2)
         self.assertTrue(world.running)
@@ -142,11 +142,12 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
             return original(world, *args, **kwargs)
         self.engine._advance_time = once
         self.engine._ollama.decide = AsyncMock(return_value=AgentAction(action="rest"))
+        self.engine.state.month_length_seconds = 2
         await self.engine.start()
         await asyncio.sleep(1.2)
         self.assertTrue(self.engine.state.running)
         self.assertNotEqual(self.engine.state.tick, 999)
-        self.assertGreater(self.engine.state.day_progress_seconds, 0)
+        self.assertGreater(self.engine.state.month_progress_seconds, 0)
         self.assertFalse(self.engine._clock_task.done())
 
 

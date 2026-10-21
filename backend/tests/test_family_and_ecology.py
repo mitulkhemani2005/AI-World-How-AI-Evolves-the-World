@@ -20,7 +20,7 @@ class FamilyAndEcologyTests(unittest.IsolatedAsyncioTestCase):
             return AgentAction(action="reproduce", target_agent_id=female.id) if person.id == male.id else AgentAction(action="rest")
         self.engine._ollama.decide = propose
         await self.engine._tick_once()
-        self.assertIsNone(female.pregnancy_days_remaining)
+        self.assertIsNone(female.pregnancy_months_remaining)
         self.assertEqual(male.family_offer.action, "reproduce")
         observation = OllamaClient._observation(female, world)
         self.assertEqual(observation["nearby_agents"][0]["family_offer"], "reproduce")
@@ -30,10 +30,10 @@ class FamilyAndEcologyTests(unittest.IsolatedAsyncioTestCase):
             return AgentAction(action="reproduce", target_agent_id=male.id) if person.id == female.id else AgentAction(action="rest")
         self.engine._ollama.decide = accept
         await self.engine._tick_once()
-        self.assertIsNotNone(female.pregnancy_days_remaining)
+        self.assertIsNotNone(female.pregnancy_months_remaining)
         self.assertIsNone(male.family_offer)
-        female.pregnancy_days_remaining = 1
-        self.engine._advance_time(world, force_day=True)
+        female.pregnancy_months_remaining = 1
+        self.engine._advance_time(world, force_month=True)
         self.assertEqual(len(world.agents), 3)
         child = world.agents[-1]
         self.assertEqual(set(child.parent_ids), {male.id, female.id})
@@ -50,7 +50,7 @@ class FamilyAndEcologyTests(unittest.IsolatedAsyncioTestCase):
             return AgentAction(action="reproduce", target_agent_id=male.id) if person.id == female.id else AgentAction(action="rest")
         self.engine._ollama.decide = choice
         await self.engine._tick_once()
-        self.assertIsNone(female.pregnancy_days_remaining)
+        self.assertIsNone(female.pregnancy_months_remaining)
         male.age_days = 100
         self.assertTrue(reproduction_block(world, male, female))
         self.assertNotIn("reproduce", [action.action for action in OllamaClient.action_choices(male, world)])

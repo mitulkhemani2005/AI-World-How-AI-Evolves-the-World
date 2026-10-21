@@ -80,7 +80,7 @@ class OllamaClient:
         observation = {
             "you": {key: full["agent"][key] for key in (
                 "name", "sex", "age_years", "health", "hunger", "thirst", "energy", "disease",
-                "memories", "knowledge", "inventory", "traits", "pregnancy_days_remaining", "children", "fear", "stress", "loneliness")},
+                "memories", "knowledge", "inventory", "traits", "pregnancy_months_remaining", "children", "fear", "stress", "loneliness")},
             "last_result": agent.last_result,
             "your_chosen_project": agent.construction_project,
             "crafting_project": agent.crafting_project,
@@ -253,12 +253,12 @@ class OllamaClient:
                 and any(node.kind == kind for node in resources)):
                 add(60, "gather", f"Collect useful {kind}", resource_kind=kind)
         for expected_mother in world.agents:
-            if (expected_mother.alive and expected_mother.pregnancy_days_remaining is not None
+            if (expected_mother.alive and expected_mother.pregnancy_months_remaining is not None
                     and agent.id in {expected_mother.id, expected_mother.other_parent_id}
                     and agent.id not in expected_mother.unborn_name_suggestions
                     and (agent.id == expected_mother.id or distance(expected_mother) <= 3)):
                 for name in OllamaClient._family_names(agent, expected_mother, world):
-                    add(6 if expected_mother.pregnancy_days_remaining <= 5 else 17,
+                    add(6 if expected_mother.pregnancy_months_remaining <= 5 else 17,
                         "name_child", f"Choose {name} as a name for the expected child",
                         target_agent_id=expected_mother.id, message=name)
         for child in world.agents:
@@ -306,7 +306,7 @@ class OllamaClient:
                         add(priority, "reproduce", f"{'Accept the family proposal from' if answering else 'Plan a child with'} {person.name}", target_agent_id=person.id)
             if distance(person) <= 1:
                 needs_care = (person.health < 75 or person.hunger > 45 or person.thirst > 45
-                              or person.fear > 35 or person.stress > 50 or person.pregnancy_days_remaining is not None)
+                              or person.fear > 35 or person.stress > 50 or person.pregnancy_months_remaining is not None)
                 if needs_care and agent.last_social_tick != world.tick:
                     priority = 8 if person.id in agent.children_ids and person.age_days < 3 * 365 else 14 if (
                         person.id in agent.children_ids or person.id == agent.bonded_partner_id) else 30
@@ -507,7 +507,7 @@ class OllamaClient:
                 "inventory": agent.inventory,
                 "traits": agent.traits,
                 "bonded_partner_id": agent.bonded_partner_id,
-                "pregnancy_days_remaining": agent.pregnancy_days_remaining,
+                "pregnancy_months_remaining": agent.pregnancy_months_remaining,
                 "parents": agent.parent_ids,
                 "children": agent.children_ids,
                 "fear": round(agent.fear),
@@ -562,8 +562,8 @@ class OllamaClient:
             ],
             "world": {
                 "tick": world.tick,
-                "day_progress_seconds": round(world.day_progress_seconds, 1),
-                "day_length_seconds": world.day_length_seconds,
+                "month_progress_seconds": round(world.month_progress_seconds, 1),
+                "month_length_seconds": world.month_length_seconds,
                 "season": world.season,
                 "weather": world.weather,
                 "technology_level": world.tech_level,
@@ -622,7 +622,7 @@ class OllamaClient:
                 actions.discard("teach")
             if not any(person.health < 75 or person.hunger > 45 or person.thirst > 45
                        or person.fear > 35 or person.stress > 50
-                       or person.pregnancy_days_remaining is not None for person in close):
+                       or person.pregnancy_months_remaining is not None for person in close):
                 actions.discard("help")
         if not any(person.age_days >= ADULT_AGE_DAYS for person in nearby):
             actions.discard("bond")

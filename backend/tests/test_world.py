@@ -74,7 +74,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
         world = self.engine.state
         person = world.agents[0]
         person.hunger, person.thirst, person.energy = 10, 10, 75
-        world.day_length_seconds = 60
+        world.month_length_seconds = 60
         self.engine._advance_biology(world, person)
 
         self.assertEqual(person.hunger, 28)
@@ -90,7 +90,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
             return AgentAction(action="rest")
 
         self.engine._ollama.decide = delayed
-        self.engine.state.day_length_seconds = 1
+        self.engine.state.month_length_seconds = 1
         starting_age = self.engine.state.agents[0].age_days
         await self.engine.start(0.5)
         try:
@@ -213,15 +213,15 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
             return AgentAction(action="reproduce", target_agent_id=female.id) if person.id == male.id else AgentAction(action="rest")
         self.engine._ollama.decide = unilateral
         await self.engine._tick_once()
-        self.assertIsNone(female.pregnancy_days_remaining)
+        self.assertIsNone(female.pregnancy_months_remaining)
         async def mutual(person, _world):
             return AgentAction(action="reproduce", target_agent_id=female.id if person.id == male.id else male.id)
         self.engine._ollama.decide = mutual
         for _ in range(20):
             await self.engine._tick_once()
-            if female.pregnancy_days_remaining is not None:
+            if female.pregnancy_months_remaining is not None:
                 break
-        self.assertIsNotNone(female.pregnancy_days_remaining)
+        self.assertIsNotNone(female.pregnancy_months_remaining)
         female.knowledge.append("foraging")
         self.engine._give_birth(world, female)
         child = world.agents[-1]
@@ -235,7 +235,7 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
         agent = world.agents[0]
         self.engine._infect(world, agent, "food poisoning", EventSource.NATURAL)
         before = agent.health
-        self.engine._advance_time(world, elapsed_seconds=world.day_length_seconds)
+        self.engine._advance_time(world, elapsed_seconds=world.month_length_seconds)
         self.assertEqual(agent.disease_days, 1)
         self.assertLess(agent.health, before)
         self.engine._save()

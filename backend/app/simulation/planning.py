@@ -51,7 +51,7 @@ def building_need(world: WorldState, agent: Agent, kind: str) -> bool:
     local = lambda item: (item.x, item.y) in neighborhood
     buildings = [building for building in world.structures if local(building) and building.condition >= 20]
     people = [person for person in world.agents if person.alive and local(person)]
-    demand = max(1, len(people) + sum(person.pregnancy_days_remaining is not None for person in people))
+    demand = max(1, len(people) + sum(person.pregnancy_months_remaining is not None for person in people))
     if kind in SHELTER_KINDS:
         capacity = sum(SHELTER_CAPACITY.get(building.kind, 0) for building in buildings)
         return capacity < demand and not any(building.kind == kind for building in buildings)
