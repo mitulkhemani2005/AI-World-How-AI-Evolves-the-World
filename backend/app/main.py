@@ -55,8 +55,8 @@ async def lifespan(_: FastAPI):
     await engine.shutdown()
 
 app = FastAPI(
-    title="AI World API",
-    description="Backend for an autonomous generational world simulation.",
+    title="Origin: AI World API",
+    description="Backend for the Origin: AI World generational life simulation.",
     version="0.1.0",
     lifespan=lifespan,
 )

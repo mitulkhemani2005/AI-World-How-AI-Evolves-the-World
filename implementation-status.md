@@ -1,8 +1,8 @@
-# Working simulation and next stages
+# Origin: AI World — Working simulation and next stages
 
 ## Current behavior
 
-The canonical design is [idea.md](idea.md). Later requirements pin Qwen, use a white interface, and display local computer time while biology uses elapsed real time (one simulated month in one real minute at default 1×). Existing SQLite worlds migrate without being reset. New worlds place the founders on adjacent land in a viable natural habitat; different seeds produce different terrain.
+The canonical design is [idea.md](idea.md). Current requirements pin one shared Qwen model, use a dark interface, and display local computer time while biology uses elapsed real time (one simulated month in one real minute at fixed 1×). Existing SQLite worlds migrate without being reset. New worlds place the founders on adjacent land in a viable natural habitat; different seeds produce different terrain.
 
 | System | Current implementation |
 | --- | --- |

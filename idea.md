@@ -1,10 +1,10 @@
-# Project Idea: AI World — How AI Evolves the World
+# Origin: AI World — Theme and Simulation Design
 
 ## Theme
 
 **A world begins with a few lives. Their choices, relationships, and shared knowledge shape what comes next.**
 
-AI World is a generational simulation about autonomous, human-like agents living in an environment with real constraints. The spectator watches their lives unfold and can optionally alter the conditions. The central question is not “What future must happen?” but “What kinds of worlds can emerge from these agents, these rules, and these events?”
+Origin: AI World is a generational simulation about autonomous, human-like agents living in an environment with real constraints. The spectator watches their lives unfold and can optionally alter the conditions. The central question is not “What future must happen?” but “What kinds of worlds can emerge from these agents, these rules, and these events?”
 
 ## Premise
 
@@ -89,7 +89,7 @@ Property can be personal, family-held, shared, or group-controlled according to 
 
 The human is primarily an observer. The simulation runs autonomously after its rules and starting conditions are set, while the spectator can optionally intervene.
 
-The separate white-themed frontend should let the spectator:
+The separate dark-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
@@ -138,7 +138,7 @@ Add tools, skills, construction, property customs, beliefs, rituals, moral syste
 
 ### Stage 5: Spectator controls and long runs
 
-Add a world-wide model selector, natural event generation, drag-and-drop spectator events, replayable histories, time acceleration, and ways to inspect long-term changes.
+Add natural event generation, drag-and-drop spectator events, replayable histories, and ways to inspect long-term changes. Keep the simulation clock fixed at 1× with no manual time-step control. Keep one shared Qwen model for all agents until a future project decision changes that constraint.
 
 The current delivery and the remaining work for these stages are tracked in [implementation-status.md](implementation-status.md). The roadmap is not a claim that all proposed social institutions, tools, or evolutionary mechanisms already exist.
 

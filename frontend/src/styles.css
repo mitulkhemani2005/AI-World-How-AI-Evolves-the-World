@@ -10,7 +10,7 @@
 @media(max-width:720px){.biome-legend{left:12px;bottom:204px;max-width:calc(100vw - 24px);gap:6px 10px;padding:8px 9px;font-size:7px}.world-caption{left:18px;top:22px}.world-hud{right:12px;top:16px;gap:11px;padding:9px}.world-hint{font-size:7px;bottom:15px}}
 .habitat-line{margin:8px 0 12px;color:#94a18c;font:9px var(--mono);letter-spacing:.04em}
 
-/* The spectator controls use a quiet white theme while the globe keeps its natural biome colors. */
+/* The spectator interface stays dark so the fictional land and life forms stand out. */
 :root{color-scheme:light;color:#27322c;background:#f4f5f1;--muted:#737d75;--line:rgba(44,58,48,.15);--panel:rgba(255,255,255,.93);--mint:#557346}
 body,.app-shell{background:#f4f5f1}
 .app-shell{background:radial-gradient(ellipse at 50% 48%,#fff 0,#f5f6f2 57%,#e9ece6 100%)}

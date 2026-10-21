@@ -9,6 +9,8 @@ import { describeWorldHit } from "../src/world-inspection.js";
 
 test("spectator controls omit world summary, time scaling, and manual month stepping", async () => {
   const html = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  assert.match(html, /<title>Origin: AI World<\/title>/);
+  assert.match(html, /<b>Origin: AI World<\/b>/);
   assert.doesNotMatch(html, /id="world-summary"|id="speed-select"|id="step-button"/);
 });
 

@@ -1,4 +1,4 @@
-# Codebase map and debugging guide
+# Origin: AI World — Codebase map and debugging guide
 
 ## Top-level layout
 
@@ -18,7 +18,7 @@
 │       ├── surface-motion.js           # Quaternion-based movement over a spherical surface
 │       ├── world-effects.js            # Geographic event animation and resource disposal
 │       ├── world-inspection.js         # Hover descriptions for world entities and terrain
-│       └── styles.css                  # White, responsive spectator interface
+│       └── styles.css                  # Dark, responsive spectator interface
 └── backend/
     ├── requirements.txt                # FastAPI, Uvicorn, and HTTPX dependencies
     └── app/
@@ -43,19 +43,19 @@ The saved world stores a procedural terrain cell for every longitude/latitude co
 | `backend/app/domain.py` | Validated agent, world, action, event, and update schemas. The world stores one shared model name. | A request or persisted snapshot has invalid fields. |
 | `backend/app/settings.py` | Ollama URL/model, request timeout, decision interval, month length, event probabilities, database path, and saved-event limit. | A runtime default or `.env` value is wrong. |
 | `backend/app/agent_brain/ollama_client.py` | Builds private observations and requests bounded structured decisions from Ollama. | Model responses fail validation or agents make unexpected proposals. |
-| `backend/app/simulation/engine.py` | Resolves quick action cycles, advances needs at day boundaries, runs animal NPC behavior, disease, hazards, relationships, teaching, birth/death, mourning, burial, and construction. | A world consequence is missing or inconsistent. |
+| `backend/app/simulation/engine.py` | Resolves quick action cycles, advances needs on the simulation-month clock, runs animal NPC behavior, disease, hazards, relationships, teaching, birth/death, mourning, burial, and construction. | A world consequence is missing or inconsistent. |
 | `backend/app/simulation/rules.py` | Shared rules consumed by the engine and Ollama decision filter, including adult age, population cap, diseases, traits, and building costs. | The model proposes something the engine cannot support, or a biological/building limit needs tuning. |
 | `backend/app/api/routes.py` | Health, world controls, model selection, biological adjustments, and spectator events. | API request/response behavior is incorrect. |
 | `backend/app/storage/sqlite_store.py` | Reads and writes the authoritative world snapshot. | State does not persist or migration looks wrong. |
 | `backend/app/main.py` | API-only FastAPI setup, configurable CORS, and engine shutdown. | Backend startup, CORS, or shutdown fails. |
 | `frontend/index.html` | Standalone spectator shell and overlay element IDs. | A UI control or overlay is missing. |
 | `frontend/src/app.js` | Three.js terrain, resource scenery, human figures, labels, click selection, inspector, event drops, filterable agent/work/birth/death timeline, and API requests. | Terrain rendering, mapping, timeline entries, or browser interaction is wrong. |
-| `frontend/src/styles.css` | White responsive styling and world overlays. | Layout, typography, mobile sizing, or colors look wrong. |
+| `frontend/src/styles.css` | Dark responsive styling and world overlays. | Layout, typography, mobile sizing, or colors look wrong. |
 | `frontend/src/surface-motion.js` | Interpolates direction with quaternions and radius separately. `Vector3.slerp` does not exist in Three.js. | A populated scene freezes or people move through the globe. |
 | `frontend/src/world-effects.js` | Consumes new events into location-specific particles; animation never controls the backend. | Effects fail to appear, deduplicate or expire. |
 | `frontend/src/world-inspection.js` | Resolves figure ancestry into current agent, NPC, resource, building, crop or terrain details. | Hover details are missing or stale. |
 | `frontend/tests/world-features.test.js` | Event lifecycle and hover descriptors using real Three.js objects. | A particular event or object type regresses. |
-| `backend/tests/test_continuous_world.py` | Acceleration, error recovery, restart/reset, close founders, GPU fallback and habitat care/spawning. | Continuous running or compute placement changes. |
+| `backend/tests/test_continuous_world.py` | Fixed-clock behavior, error recovery, restart/reset, close founders, GPU fallback and habitat care/spawning. | Continuous running or compute placement changes. |
 | `frontend/tests/world-runtime.test.js` | Executes the app update/frame flow using real geometry/math and stub browser/GPU surfaces. | A production build passes but rendering or selection fails at runtime. |
 | `backend/tests/test_world.py` | Isolated temporary-world regression checks. | Biology, material accounting, consent, timing, inference or persistence changes. |
 | `frontend/vite.config.js` | Frontend dev server and proxy from `/api` to FastAPI. | Local frontend API requests fail. |
@@ -65,7 +65,7 @@ The saved world stores a procedural terrain cell for every longitude/latitude co
 ```text
 Vite frontend polls GET /api/world
                 ↓
-FastAPI engine advances environment and day-level biology
+FastAPI engine advances environment and month-level biology
                 ↓
 each decision-capable agent receives its own private observation
                 ↓

@@ -7,7 +7,7 @@ from pathlib import Path
 class Settings:
     """Runtime settings read from environment variables."""
 
-    app_name = "AI World API"
+    app_name = "Origin: AI World API"
     ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
     # The simulation intentionally pins one shared, small Qwen brain for every person.
     ollama_model = "qwen2.5:0.5b"
