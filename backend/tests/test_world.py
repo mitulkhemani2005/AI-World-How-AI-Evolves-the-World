@@ -70,6 +70,22 @@ class WorldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(self.engine.state.agents[0].last_action.action, "rest")
         self.assertEqual(self.engine.state.agents[0].decision_source, "llm")
 
+    async def test_survival_needs_follow_real_time_at_compressed_year_clock(self):
+        world = self.engine.state
+        person = world.agents[0]
+        person.hunger, person.thirst, person.energy = 10, 10, 75
+        world.day_length_seconds = 720 / 365
+
+        for _ in range(30):
+            self.engine._advance_biology(world, person)
+
+        # Thirty simulated days pass in about one real minute; needs rise at the
+        # same real-time rate as one day per minute, leaving decision time to respond.
+        self.assertAlmostEqual(person.hunger, 10 + 18 * 30 * (720 / 365) / 60, places=4)
+        self.assertAlmostEqual(person.thirst, 10 + 24 * 30 * (720 / 365) / 60, places=4)
+        self.assertAlmostEqual(person.energy, 75 - 12 * 30 * (720 / 365) / 60, places=4)
+        self.assertTrue(person.alive)
+
     async def test_clock_advances_while_model_is_waiting(self):
         gate = asyncio.Event()
 

@@ -164,6 +164,17 @@ class ContinuousWorldTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual([body["options"]["num_gpu"] for body in captured], [999, 0])
         self.assertTrue(all(body["model"] == "qwen2.5:0.5b" and body["keep_alive"] == -1 for body in captured))
 
+    async def test_backend_starts_installed_local_ollama_when_service_is_down(self):
+        from app import main
+
+        with patch.object(main.OllamaClient, "is_available", new=AsyncMock(side_effect=[False, True])), \
+             patch.object(main.shutil, "which", return_value="ollama.exe"), \
+             patch.object(main.subprocess, "Popen") as launch:
+            await main._ensure_local_ollama()
+
+        launch.assert_called_once()
+        self.assertEqual(launch.call_args.args[0], ["ollama.exe", "serve"])
+
 
     async def test_runtime_reports_actual_gpu_residency(self):
         original_client = httpx.AsyncClient

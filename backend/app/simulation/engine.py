@@ -1163,55 +1163,61 @@ class SimulationEngine(ActivityRules):
     def _advance_biology(self, world: WorldState, agent: Agent) -> None:
         """Advance body state once per simulated day; all ages use the same hazard rules."""
         agent.age_days += 1
+        # The world clock is deliberately compressed to twelve real minutes per year.
+        # Scale short-term bodily pressure to elapsed real time so agents still have
+        # enough decision rounds to eat, drink and rest between simulated days.
+        survival_pace = self._survival_pace(world)
         # Feelings persist between decisions and ease gradually in safer surroundings.
-        agent.fear = max(0, agent.fear - 2)
-        agent.stress = max(0, agent.stress - (2 if self._has_shelter(world, agent) else 1))
+        agent.fear = max(0, agent.fear - 2 * survival_pace)
+        agent.stress = max(0, agent.stress - (2 if self._has_shelter(world, agent) else 1) * survival_pace)
         familiar_nearby = any(other.alive and other.id != agent.id and self._distance(agent, other) <= 1
                               and (other.id in agent.parent_ids or other.id in agent.children_ids
                                    or other.id == agent.bonded_partner_id
                                    or agent.relationship_scores.get(other.id, 0) >= 40)
                               for other in world.agents)
-        agent.loneliness = max(0, agent.loneliness - 5) if familiar_nearby else min(100, agent.loneliness + 3)
+        agent.loneliness = (max(0, agent.loneliness - 5 * survival_pace) if familiar_nearby
+                            else min(100, agent.loneliness + 3 * survival_pace))
         if agent.loneliness > 60:
-            agent.stress = min(100, agent.stress + 1)
+            agent.stress = min(100, agent.stress + survival_pace)
         shelter = self._has_shelter(world, agent)
         exposed = not shelter and world.weather in {"cold", "rain", "wind"}
         # Needs represent daily meals, water and sleep, rather than weeks between survival tasks.
-        agent.hunger = min(100, agent.hunger + (14 if agent.age_days < 6 * 365 else 18) + (4 if exposed else 0))
-        agent.thirst = min(100, agent.thirst + (18 if agent.age_days < 6 * 365 else 24))
-        agent.energy = max(0, agent.energy - (8 if agent.age_days < 6 * 365 else 12))
+        agent.hunger = min(100, agent.hunger + ((14 if agent.age_days < 6 * 365 else 18) + (4 if exposed else 0)) * survival_pace)
+        agent.thirst = min(100, agent.thirst + (18 if agent.age_days < 6 * 365 else 24) * survival_pace)
+        agent.energy = max(0, agent.energy - (8 if agent.age_days < 6 * 365 else 12) * survival_pace)
 
         # Shelter protects from exposure, but not from direct hazards or disease.
         if exposed:
-            agent.energy = max(0, agent.energy - 6)
+            agent.energy = max(0, agent.energy - 6 * survival_pace)
             if world.weather == "cold":
-                if self._hurt(world, agent, 0.4 if agent.age_days < 6 * 365 else 0.7, "cold exposure without shelter"):
+                if self._hurt(world, agent, (0.4 if agent.age_days < 6 * 365 else 0.7) * survival_pace,
+                              "cold exposure without shelter"):
                     return
-            elif world.weather == "rain" and agent.disease is None and self._random.random() < 0.002:
+            elif world.weather == "rain" and agent.disease is None and self._random.random() < 0.002 * survival_pace:
                 self._infect(world, agent, "respiratory illness", EventSource.NATURAL)
 
         if agent.hunger >= 85:
-            if self._hurt(world, agent, 2, "starvation"):
+            if self._hurt(world, agent, 2 * survival_pace, "starvation"):
                 return
         if agent.thirst >= 85:
-            if self._hurt(world, agent, 4, "dehydration"):
+            if self._hurt(world, agent, 4 * survival_pace, "dehydration"):
                 return
         if agent.energy <= 5:
-            if self._hurt(world, agent, 1, "exhaustion"):
+            if self._hurt(world, agent, 1 * survival_pace, "exhaustion"):
                 return
 
         if agent.disease:
-            if self._hurt(world, agent, 3 if agent.disease == "wound infection" else 2, agent.disease):
+            if self._hurt(world, agent, (3 if agent.disease == "wound infection" else 2) * survival_pace, agent.disease):
                 return
             agent.disease_days += 1
-            if agent.disease_days >= 5 and self._random.random() < 0.15:
+            if agent.disease_days >= 5 and self._random.random() < 0.15 * survival_pace:
                 disease = agent.disease
                 agent.disease = None
                 agent.disease_days = 0
                 agent.immune_to.append(disease)
                 self._record(world, EventSource.NATURAL, EventKind.DISEASE_RECOVERED, f"{agent.name} recovered from {disease}.", [agent.id])
             elif agent.disease:
-                spread_chance = 0.10 if agent.disease == "respiratory illness" else 0.05
+                spread_chance = (0.10 if agent.disease == "respiratory illness" else 0.05) * survival_pace
                 for other in world.agents:
                     if other.alive and not other.disease and self._distance(agent, other) <= 1:
                         if self._random.random() < spread_chance:
@@ -1220,9 +1226,9 @@ class SimulationEngine(ActivityRules):
         if agent.pregnancy_days_remaining is not None:
             agent.pregnancy_days_remaining -= 1
             # Pregnancy imposes an actual care and nutrition burden in the short 9-day cycle.
-            agent.hunger = min(100, agent.hunger + 3)
-            agent.thirst = min(100, agent.thirst + 2)
-            agent.energy = max(0, agent.energy - 2)
+            agent.hunger = min(100, agent.hunger + 3 * survival_pace)
+            agent.thirst = min(100, agent.thirst + 2 * survival_pace)
+            agent.energy = max(0, agent.energy - 2 * survival_pace)
             if agent.pregnancy_days_remaining <= 0:
                 self._give_birth(world, agent)
         if agent.age_days > 45 * 365:
@@ -1235,6 +1241,13 @@ class SimulationEngine(ActivityRules):
         cell = self._terrain_at(world, agent.x, agent.y)
         if cell and cell.kind == "ocean" and not any(item.id == agent.vehicle_id and item.durability > 0 for item in world.items):
             self._hurt(world, agent, 12, "drowning without a seaworthy raft")
+
+    @staticmethod
+    def _survival_pace(world: WorldState) -> float:
+        """Scale needs and recurring exposure by real-time pace, not accelerated game days."""
+        # At sixty seconds/day, body rates remain one full unit per simulated day. At the
+        # default twelve-minute/year clock, they slow proportionally while aging still advances.
+        return min(1.0, max(0.001, world.day_length_seconds / (60 * max(1, world.time_scale))))
 
     def _share_food_with_dependents(self, world: WorldState, parent: Agent, node: ResourceNode) -> None:
         """Consume one extra gathered unit to reduce hunger for a nearby child."""

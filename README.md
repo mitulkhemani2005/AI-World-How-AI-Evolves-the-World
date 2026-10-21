@@ -77,7 +77,7 @@ From the repository root:
 python -m uvicorn app.main:app --app-dir backend --reload --port 8000
 ```
 
-The API and interactive documentation are at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). FastAPI exposes the API only; it does not serve or build the spectator page.
+The backend starts the local `ollama serve` process when Ollama is installed but not already running, then warms Qwen on the GPU. The API and interactive documentation are at [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs). FastAPI exposes the API only; it does not serve or build the spectator page.
 
 ### 4. Start the independent frontend
 

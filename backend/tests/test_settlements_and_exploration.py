@@ -17,6 +17,8 @@ class SettlementTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_fatal_damage_records_specific_cause_and_snapshot(self):
         world = self.engine.state
+        # This unit test exercises one full biological day at normal time scale.
+        world.day_length_seconds = 60
         person = world.agents[0]
         for cause, hunger, thirst, disease in (("starvation", 100, 0, None), ("dehydration", 0, 100, None),
                                               ("food poisoning", 0, 0, "food poisoning")):

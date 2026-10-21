@@ -17,6 +17,7 @@ class Settings:
     ollama_gpu_layers = 999
     auto_acceleration_seconds = float(os.getenv("AUTO_ACCELERATION_SECONDS", "120"))
     # 365 biological days consume exactly twelve real minutes at the default 1x speed.
+    # The simulation scales daily survival pressure against this compressed clock.
     day_length_seconds = float(os.getenv("DAY_LENGTH_SECONDS", str(720 / 365)))
     natural_event_probability = float(os.getenv("NATURAL_EVENT_PROBABILITY", "0.01"))
     disease_emergence_probability = float(os.getenv("DISEASE_EMERGENCE_PROBABILITY", "0.002"))
