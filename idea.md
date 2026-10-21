@@ -93,7 +93,7 @@ The separate dark-themed frontend should let the spectator:
 
 - Orbit and zoom around a procedural 3D fictional globe with distinct continents and visible oceans, rivers, lakes, farmland, mountains, deserts, ice, and forest biomes. Do not use Earth imagery or tiled map visuals.
 - See human figures, animals, crop plots, resources, and buildings attached to the globe surface.
-- Advance biology from elapsed real running time at a fixed 1× rate, independently of model latency. One simulated month takes one real minute. Visible sunlight and the local clock follow the spectator's computer time; simulated year/month are displayed separately. Agents can make decisions throughout a simulated month.
+- Advance biology from elapsed real running time at a fixed 1× rate, independently of model latency. One simulated month takes one real minute. Show only the simulated year/month, and use stable globe lighting that does not depend on the spectator's computer clock. Agents can make decisions throughout a simulated month.
 - Click a human figure directly on the globe to inspect needs, health, memories, relationships, lineage, current biome, and current action. Do not require selecting agents from a name roster.
 - Keep dead bodies visible on the ground. Nearby relatives receive the death in their memories and decide whether to mourn, bury, or attend to other needs. Burial leaves a grave marker.
 - Give animals hardcoded NPC behavior for movement, feeding, watering, health, illness, reproduction, and death. Animals do not make LLM calls.

@@ -880,7 +880,6 @@ function renderFrame(now) {
     for (const leg of animal.userData.legs || []) leg.rotation.x = walking ? Math.sin(now * 0.012 + leg.userData.phase) * 0.45 : 0;
   }
   worldEffects.update(now);
-  updateDaylight();
   renderLabels();
   renderer.render(scene, camera);
   if (hoverPointer && now - lastHoverAt > 80 && !pointerDown) {
@@ -904,22 +903,6 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
-
-function updateDaylight() {
-  // Light follows the spectator's actual local clock, not the simulation's accelerated day.
-  const current = new Date();
-  const hour = current.getHours() + current.getMinutes() / 60 + current.getSeconds() / 3600;
-  const daylight = THREE.MathUtils.clamp((Math.sin(((hour - 6) / 12) * Math.PI) + 0.15) / 1.15, 0, 1);
-  // Keep the terrain legible at night instead of rendering it nearly black.
-  sunlight.intensity = 0.78 + daylight * 1.45;
-  skyLight.intensity = 1.0 + daylight * 0.75;
-  const angle = ((hour - 6) / 24) * Math.PI * 2;
-  sunlight.position.set(Math.cos(angle) * 18, Math.max(1, Math.sin(((hour - 6) / 12) * Math.PI) * 20), Math.sin(angle) * 18);
-  // Keep the unlit terrain readable while still giving it a subtle local-clock night tint.
-  if (terrainMesh?.material?.color) {
-    terrainMesh.material.color.setRGB(0.78 + daylight * 0.22, 0.83 + daylight * 0.17, 0.9 + daylight * 0.1);
-  }
-}
 
 function statBar(name, value, lowIsBad = false) {
   const level = Number(value || 0);
@@ -990,9 +973,8 @@ function renderWorld(next) {
   world = next;
   const year = Math.floor(world.tick / 12) + 1; const month = (world.tick % 12) + 1;
   const living = world.agents.filter((agent) => agent.alive).length;
-  const localTime = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  // Keep the spectator clock focused on real local time and the simulation calendar.
-  ui.clock.textContent = `LOCAL ${localTime} · YEAR ${year} · MONTH ${month}`;
+  // Show only the simulation calendar; browser-local time is unrelated to world time.
+  ui.clock.textContent = `YEAR ${year} · MONTH ${month}`;
   $("#population-label").textContent = String(living);
   $("#age-label").textContent = String(year);
   $("#weather-label").textContent = world.weather || "clear";
