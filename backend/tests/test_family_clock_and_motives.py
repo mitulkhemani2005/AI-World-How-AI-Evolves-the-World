@@ -14,12 +14,12 @@ class FamilyClockAndMotiveTests(unittest.IsolatedAsyncioTestCase):
     setUp = fixtures.WorldTests.setUp
     asyncTearDown = fixtures.WorldTests.asyncTearDown
 
-    async def test_one_simulated_year_is_twelve_real_minutes_at_default_speed(self):
+    async def test_one_simulated_day_is_one_real_minute_at_default_speed(self):
         world = self.engine.state
-        self.assertEqual(world.rules_version, 3)
+        self.assertEqual(world.rules_version, 4)
         self.assertFalse(world.auto_accelerate)
         self.assertEqual(world.time_scale, 1)
-        self.assertAlmostEqual(world.day_length_seconds * 365, 720)
+        self.assertEqual(world.day_length_seconds, 60)
         # Empty the isolated test habitat so the clock check measures calendar math.
         world.agents.clear()
         world.animals.clear()
@@ -27,8 +27,23 @@ class FamilyClockAndMotiveTests(unittest.IsolatedAsyncioTestCase):
               patch.object(self.engine, "_regenerate_resources"),
               patch.object(self.engine, "_advance_ecology"),
               patch.object(self.engine, "_natural_events")):
-            self.engine._advance_time(world, elapsed_seconds=720)
-        self.assertEqual(world.tick, 365)
+            self.engine._advance_time(world, elapsed_seconds=60)
+        self.assertEqual(world.tick, 1)
+
+    async def test_old_clock_migrates_to_one_minute_without_replacing_world(self):
+        world = self.engine.state
+        world.rules_version = 3
+        world.day_length_seconds = 720 / 365
+        world.day_progress_seconds = world.day_length_seconds / 2
+        world_id = world.id
+        self.engine._save()
+
+        restored = SimulationEngine(str(self.engine._store.path))
+        self.assertEqual(restored.state.id, world_id)
+        self.assertEqual(restored.state.rules_version, 4)
+        self.assertEqual(restored.state.day_length_seconds, 60)
+        self.assertAlmostEqual(restored.state.day_progress_seconds, 30)
+        self.assertEqual([person.id for person in restored.state.agents], [person.id for person in world.agents])
 
     async def test_saved_world_clock_and_pregnancy_upgrade_once(self):
         world = self.engine.state

@@ -194,8 +194,10 @@ test("blocked WebGL still updates the compatibility globe, picking, events and c
   assert.equal(world.running, true);
 });
 
-test("shared weapons and rafts render, carried items follow figures, and death reasons are reported", async () => {
+test("shared tools render and births/deaths stay in the agent life timeline", async () => {
   const { app, world, elements } = await loadWorldApp();
+  // The browser applies the HTML hidden attribute; model that initial DOM state here.
+  elements.get("#world-timeline").hidden = true;
   world.items = [{ id: "spear", kind: "spear", x: 17, y: 8, creator_agent_id: "Aru", durability: 100 },
     { id: "raft", kind: "raft", x: 18, y: 8, creator_agent_id: "Nima", durability: 100, capacity: 4 }];
   app.renderWorld(world); app.renderFrame(100);
@@ -209,7 +211,26 @@ test("shared weapons and rafts render, carried items follow figures, and death r
   world.agents[1].alive = false;
   world.agents[1].death_cause = "a wolf attack";
   world.agents[1].death_tick = 8;
+  world.events = [
+    { id: "work", kind: "action", tick: 8, message: "Aru gathered wood.", agent_ids: ["Aru"], details: { action: "gather" } },
+    { id: "birth", kind: "birth", tick: 7, message: "A child was born.", agent_ids: ["Aru"] },
+    { id: "death", kind: "death", tick: 8, message: "Nima died from a wolf attack.", agent_ids: ["Nima"] },
+  ];
   app.renderWorld(world); app.renderFrame(300);
-  assert.equal(elements.get("#death-notices").hidden, false);
-  assert.ok(elements.get("#death-notices").innerHTML.includes("a wolf attack"));
+  const timeline = elements.get("#world-timeline");
+  assert.equal(timeline.hidden, true, "timeline stays closed until opened by the spectator");
+  assert.ok(timeline.innerHTML.includes("Aru gathered wood."));
+  assert.ok(timeline.innerHTML.includes("Newborns"));
+  assert.ok(timeline.innerHTML.includes("Nima died from a wolf attack."));
+  assert.ok(timeline.innerHTML.includes('data-timeline-filter="death"'));
+  assert.ok(!String(elements.get("#toast").textContent || "").includes("a wolf attack"), "death is not a transient pop-up");
+  timeline.events.get("click")({ target: { closest: (selector) => selector === "[data-timeline-filter]"
+    ? { dataset: { timelineFilter: "death" } } : null } });
+  assert.ok(timeline.innerHTML.includes("Nima died from a wolf attack."), "death tab contains the persistent report");
+  elements.get("#timeline-button").events.get("click")();
+  assert.equal(timeline.hidden, false, "the life button opens the timeline");
+  timeline.events.get("click")({ target: { closest: (selector) => selector === "[data-timeline-agent]"
+    ? { dataset: { timelineAgent: "Nima" } } : null } });
+  assert.equal(app.getSelected(), "Nima", "choosing an entry opens that agent's globe inspector");
+  assert.equal(timeline.hidden, true, "the timeline closes when following an agent");
 });

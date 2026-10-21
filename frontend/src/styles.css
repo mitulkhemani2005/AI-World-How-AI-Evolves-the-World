@@ -51,8 +51,31 @@ body,.app-shell{background:#f4f5f1}
 .scene-status[hidden]{display:none}
 .action-explanation{margin-top:12px;padding:10px;border-radius:6px;background:#eef2e9;color:#40503a;font-size:11px;line-height:1.5}
 .world-tooltip{position:absolute;z-index:12;width:248px;pointer-events:none;display:grid;gap:6px;padding:13px 15px;border:1px solid #cbd5c5;border-radius:10px;background:rgba(255,255,255,.97);box-shadow:0 10px 35px #263a2420;color:#344330;font-size:11px;line-height:1.4}
-.death-notices{position:absolute;z-index:7;right:20px;top:112px;max-width:270px;display:grid;gap:8px}.death-notices[hidden]{display:none}.death-report{padding:12px 14px;border:1px solid #ddc7bb;border-radius:9px;background:#fffdf9;color:#634438;font-size:11px;line-height:1.5;text-align:left;cursor:pointer}.death-report b,.death-report span{display:block}.death-report small{color:#817267}
 .world-tooltip strong{text-transform:capitalize;font-size:13px}.world-tooltip[hidden]{display:none}.world-tooltip span{display:block;color:#5b6b54}
 .speed-picker{display:grid;gap:4px;margin-right:10px}.speed-picker span{font:8px var(--mono);letter-spacing:.1em;color:#738076}.speed-picker select{border:0;background:transparent;color:#3e5138;font-size:11px;max-width:120px}
 .world-scene.event-armed{cursor:crosshair}
 @media(max-width:950px){.world-state{display:none}.speed-picker{margin-right:0}.topbar{padding-left:14px;padding-right:14px}.model-picker{margin-right:0}.model-picker select{width:112px}}
+
+/* A persistent, filterable life record replaces short-lived birth/death pop-ups. */
+.world-timeline{position:absolute;z-index:9;right:20px;top:126px;bottom:34px;width:min(370px,calc(100vw - 32px));display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.97);box-shadow:0 20px 60px rgba(31,42,33,.18);backdrop-filter:blur(16px)}
+.world-timeline[hidden]{display:none}
+.timeline-header{display:flex;align-items:center;justify-content:space-between;padding:17px 17px 12px;border-bottom:1px solid var(--line)}
+.timeline-header h2{margin:6px 0 0;color:#27322c;font-size:16px;font-weight:500}
+.timeline-close{width:30px;height:30px;border:1px solid var(--line);border-radius:7px;color:#58645a;background:#fff;font-size:19px;cursor:pointer}
+.timeline-tabs{display:grid;grid-template-columns:repeat(4,1fr);gap:4px;padding:9px 10px;border-bottom:1px solid var(--line)}
+.timeline-tab{display:flex;align-items:center;justify-content:center;gap:5px;min-height:31px;padding:4px;border:1px solid transparent;border-radius:6px;color:#667268;background:transparent;font-size:9px;cursor:pointer}
+.timeline-tab span{min-width:16px;padding:2px 4px;border-radius:9px;color:#627257;background:#edf1e8;font:8px var(--mono)}
+.timeline-tab:hover,.timeline-tab.active{border-color:#d6dfcf;color:#38512f;background:#edf3e8}
+.timeline-feed{flex:1;overflow:auto;padding:9px 12px 15px;overscroll-behavior:contain}
+.timeline-item{position:relative;display:block;width:100%;margin:4px 0;padding:10px 11px;border:1px solid #e6eae3;border-radius:8px;color:#354238;background:#fff;text-align:left;text-decoration:none}
+button.timeline-item{cursor:pointer}
+button.timeline-item:hover{border-color:#aabf9c;background:#f8faf6}
+.timeline-item p{margin:6px 0;color:#354238;font-size:11px;line-height:1.45}
+.timeline-item small{display:block;color:#788278;font:8px var(--mono);line-height:1.5;letter-spacing:.015em}
+.timeline-kind{display:inline-flex;padding:3px 6px;border-radius:10px;color:#52624b;background:#edf2e9;font:8px var(--mono);text-transform:uppercase;letter-spacing:.06em}
+.kind-birth{color:#47713b;background:#edf5e7}.kind-death{color:#96554e;background:#f8ece9}.kind-action{color:#4b6472;background:#edf3f6}.kind-natural_event,.kind-spectator_event{color:#87653c;background:#f8f1e4}
+.timeline-empty{padding:20px 10px;color:#778177;font-size:11px;line-height:1.5;text-align:center}
+.timeline-toggle{border-left:1px solid var(--line)}
+.timeline-toggle[aria-expanded="true"]{color:#344f2d}
+@media(max-width:720px){.world-timeline{right:12px;top:102px;bottom:30px;width:min(370px,calc(100vw - 24px))}}
+@media(max-width:490px){.world-timeline{top:99px;bottom:18px}.timeline-tab{gap:3px;font-size:8px}.timeline-item{padding:8px}}

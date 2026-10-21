@@ -106,6 +106,16 @@ class SimulationEngine(ActivityRules):
                 if person.pregnancy_days_remaining is not None:
                     person.pregnancy_days_remaining = max(1, math.ceil(person.pregnancy_days_remaining / 10))
             self.state.rules_version = 3
+        if self.state.rules_version < 4:
+            # Upgrade existing saves to one real minute per day without replacing the
+            # world or moving its progress backward within the current simulated day.
+            previous_day = max(0.0001, self.state.day_length_seconds)
+            self.state.day_progress_seconds = min(
+                settings.day_length_seconds - 0.0001,
+                self.state.day_progress_seconds / previous_day * settings.day_length_seconds,
+            )
+            self.state.day_length_seconds = settings.day_length_seconds
+            self.state.rules_version = 4
         for person in self.state.agents:
             if not person.alive and not person.death_details:
                 # Historical snapshots cannot identify a fatal blow that was never recorded.
@@ -121,7 +131,7 @@ class SimulationEngine(ActivityRules):
             id=str(uuid4()),
             seed=seed,
             global_model=settings.ollama_model,
-            rules_version=3,
+            rules_version=4,
             width=36,
             height=18,
             day_length_seconds=settings.day_length_seconds,

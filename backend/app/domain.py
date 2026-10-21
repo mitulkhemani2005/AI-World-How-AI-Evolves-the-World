@@ -315,7 +315,7 @@ class WorldState(BaseModel):
     tick: int = 0
     # Scaled elapsed seconds within the current day; a decision never advances this clock.
     day_progress_seconds: float = Field(default=0, ge=0)
-    day_length_seconds: float = Field(default=720 / 365, ge=1, le=3600)
+    day_length_seconds: float = Field(default=60, ge=1, le=3600)
     time_scale: float = Field(default=1, ge=1, le=16)
     base_time_scale: float = Field(default=1, ge=1, le=16)
     auto_accelerate: bool = False

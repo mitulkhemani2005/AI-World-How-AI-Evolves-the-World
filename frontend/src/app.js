@@ -17,6 +17,7 @@ let world = null;
 let selectedAgentId = null;
 let currentWorldId = null;
 let isStepping = false;
+let timelineFilter = "all";
 let draggedEvent = null;
 let toastTimeout = null;
 let followingAgentId = null;
@@ -121,8 +122,6 @@ const structureGroup = new THREE.Group(); scene.add(structureGroup);
 const animalGroup = new THREE.Group(); scene.add(animalGroup);
 const cropGroup = new THREE.Group(); scene.add(cropGroup);
 const itemGroup = new THREE.Group(); scene.add(itemGroup);
-let deathWorldId = null;
-const reportedDeaths = new Set();
 const worldEffects = new WorldEffects(scene, worldToScene);
 const labels = new Map();
 const peopleMeshes = new Map();
@@ -964,7 +963,7 @@ function renderInspector() {
   explanation.textContent = [agent.last_action?.reason, agent.last_result,
     !agent.alive && agent.death_details ? `Death report: ${agent.death_cause || "unrecorded cause"}. Hunger ${Math.round(agent.death_details.hunger ?? agent.hunger)}, thirst ${Math.round(agent.death_details.thirst ?? agent.thirst)}, energy ${Math.round(agent.death_details.energy ?? agent.energy)}. ${agent.death_details.disease || ""} ${agent.death_details.attribution || ""}` : "",
     agent.family_offer && agent.family_offer_until_tick >= world.tick ? `Family proposal: ${agent.family_offer.action} · waiting for an answer` : "",
-    agent.pregnancy_days_remaining != null ? `Birth in about ${Math.ceil((agent.pregnancy_days_remaining * (world.day_length_seconds || 720 / 365) - (world.day_progress_seconds || 0)) / (world.time_scale || 1))} real seconds at current speed` : "",
+    agent.pregnancy_days_remaining != null ? `Birth in about ${Math.ceil((agent.pregnancy_days_remaining * (world.day_length_seconds || 60) - (world.day_progress_seconds || 0)) / (world.time_scale || 1))} real seconds at current speed` : "",
     agent.construction_project ? `Project: ${agent.construction_project.replaceAll("_", " ")}` : "",
     agent.decision_source ? `Decision: ${agent.decision_source}${agent.intention_source ? ` (${agent.intention_source} intention)` : ""}` : ""].filter(Boolean).join(" · ");
   ui.inspector.querySelector(".detail-list")?.after(explanation);
@@ -1000,24 +999,79 @@ function renderWorld(next) {
   if (document.activeElement !== $("#speed-select")) $("#speed-select").value = world.auto_accelerate ? "auto" : String(world.time_scale || 2);
   ui.run.textContent = world.running ? "Ⅱ" : "▶";
   ui.run.title = world.running ? "Pause the simulation" : "Run the simulation";
-  syncObjects(world); renderInspector(); renderCulture(); renderDeathReports();
+  syncObjects(world); renderInspector(); renderCulture(); renderTimeline();
 }
 
-function renderDeathReports() {
-  const changed = deathWorldId !== world.id;
-  if (changed) { deathWorldId = world.id; reportedDeaths.clear(); }
-  const deceased = world.agents.filter((person) => !person.alive);
-  for (const person of deceased) {
-    if (!changed && !reportedDeaths.has(person.id)) notify(`${person.name} died from ${person.death_cause || "an unrecorded cause"}.`, true);
-    reportedDeaths.add(person.id);
-  }
-  const panel = $("#death-notices");
-  panel.hidden = deceased.length === 0;
-  panel.innerHTML = deceased.slice(-3).reverse().map((person) => `<button class="death-report" data-person="${escapeHtml(person.id)}"><b>${escapeHtml(person.name)} died</b><span>${escapeHtml(person.death_cause || "Cause was not recorded")}</span><small>${person.death_tick == null ? "Historical record" : `Day ${person.death_tick + 1}`} · click for their life record</small></button>`).join("");
-  for (const button of document.querySelectorAll(".death-report")) button.addEventListener("click", () => {
-    selectedAgentId = button.dataset.person; renderInspector(); focusPopulation(world);
-  });
+function renderTimeline() {
+  const panel = $("#world-timeline");
+  const previousScrollTop = panel.querySelector(".timeline-feed")?.scrollTop || 0;
+  const events = world?.events || [];
+  const births = events.filter((event) => event.kind === "birth");
+  const deaths = events.filter((event) => event.kind === "death");
+  const work = events.filter((event) => event.kind === "action");
+  $("#timeline-count").textContent = String(events.length);
+
+  const filters = [
+    ["all", "All", events.length], ["work", "Work", work.length],
+    ["birth", "Newborns", births.length], ["death", "Deaths", deaths.length],
+  ];
+  const filtered = timelineFilter === "work" ? work
+    : timelineFilter === "birth" ? births : timelineFilter === "death" ? deaths : events;
+  const people = new Map((world?.agents || []).map((agent) => [agent.id, agent]));
+  const rows = filtered.slice(-150).reverse().map((event) => {
+    const actorIds = event.agent_ids || [];
+    const actors = actorIds.map((id) => people.get(id)?.name).filter(Boolean);
+    const firstAgentId = actorIds.find((id) => people.has(id));
+    const tick = Math.max(0, Number(event.tick) || 0);
+    const year = Math.floor(tick / 365) + 1;
+    const day = tick % 365 + 1;
+    const category = event.kind === "action" ? (event.details?.action || "work").replaceAll("_", " ")
+      : (event.kind || "world event").replaceAll("_", " ");
+    const actorLabel = actors.length ? actors.join(" · ") : "World";
+    const content = escapeHtml(event.message || category);
+    const meta = `${escapeHtml(actorLabel)} · ${escapeHtml(category)} · Y${year} D${day}`;
+    const tag = `<span class="timeline-kind kind-${escapeHtml(event.kind || "event")}">${escapeHtml(category)}</span>`;
+    return firstAgentId
+      ? `<button class="timeline-item" data-timeline-agent="${escapeHtml(firstAgentId)}">${tag}<p>${content}</p><small>${meta}</small></button>`
+      : `<article class="timeline-item">${tag}<p>${content}</p><small>${meta}</small></article>`;
+  }).join("");
+
+  panel.innerHTML = `<header class="timeline-header"><div><span class="eyebrow">WORLD RECORD</span><h2>Life timeline</h2></div><button type="button" class="timeline-close" data-timeline-close aria-label="Close timeline">×</button></header>
+    <nav class="timeline-tabs" aria-label="Timeline sections">${filters.map(([key, label, count]) =>
+      `<button type="button" class="timeline-tab${timelineFilter === key ? " active" : ""}" data-timeline-filter="${key}" aria-pressed="${timelineFilter === key}">${label}<span>${count}</span></button>`).join("")}</nav>
+    <div class="timeline-feed" aria-live="polite">${rows || `<p class="timeline-empty">${timelineFilter === "birth" ? "No newborns recorded yet." : timelineFilter === "death" ? "No deaths recorded." : timelineFilter === "work" ? "No agent actions recorded yet." : "The world has not recorded an event yet."}</p>`}</div>`;
+  // Polling refreshes event details without snapping a spectator back to the newest entry.
+  panel.querySelector(".timeline-feed").scrollTop = previousScrollTop;
 }
+
+$("#timeline-button").addEventListener("click", () => {
+  const panel = $("#world-timeline");
+  panel.hidden = !panel.hidden;
+  $("#timeline-button").setAttribute("aria-expanded", String(!panel.hidden));
+  if (!panel.hidden) $("#culture-popover").hidden = true;
+});
+
+$("#world-timeline").addEventListener("click", (event) => {
+  const tab = event.target.closest("[data-timeline-filter]");
+  if (tab) {
+    timelineFilter = tab.dataset.timelineFilter;
+    renderTimeline();
+    return;
+  }
+  if (event.target.closest("[data-timeline-close]")) {
+    $("#world-timeline").hidden = true;
+    $("#timeline-button").setAttribute("aria-expanded", "false");
+    return;
+  }
+  const entry = event.target.closest("[data-timeline-agent]");
+  if (entry) {
+    selectedAgentId = entry.dataset.timelineAgent;
+    $("#world-timeline").hidden = true;
+    $("#timeline-button").setAttribute("aria-expanded", "false");
+    renderInspector();
+    focusPopulation(world);
+  }
+});
 
 async function refreshWorld() {
   try { renderWorld(await api("/api/world")); }
