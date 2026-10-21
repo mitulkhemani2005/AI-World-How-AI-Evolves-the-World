@@ -124,6 +124,16 @@ class ResourceNode(BaseModel):
     days_old: int = Field(default=0, ge=0)
 
 
+class PlaceMemory(BaseModel):
+    """A private, spatial memory of a useful place an agent has personally learned."""
+
+    kind: Literal["food", "water", "resource", "shelter", "structure"]
+    x: int
+    y: int
+    detail: str = ""
+    last_seen_tick: int = 0
+
+
 class TerrainCell(BaseModel):
     """A fictional globe coordinate with a biome and climate profile."""
 
@@ -206,6 +216,8 @@ class Agent(BaseModel):
     model: str
     traits: dict[str, float] = Field(default_factory=dict)
     memories: list[str] = Field(default_factory=list)
+    # Coordinates are private to this person and persist with the world snapshot.
+    place_memories: list[PlaceMemory] = Field(default_factory=list)
     knowledge: list[str] = Field(default_factory=list)
     inventory: dict[str, int] = Field(default_factory=dict)
     relationship_scores: dict[str, float] = Field(default_factory=dict)

@@ -928,6 +928,8 @@ function renderInspector() {
     .map(({ person, score }) => `${person.name} ${score > 25 ? "close" : score < -10 ? "strained" : "familiar"} (${Math.round(score)})`)
     .join(" · ") || "None yet";
   const memories = [...(agent.memories || [])].slice(-4).reverse();
+  const knownPlaces = (agent.place_memories || []).slice(-4).map((place) =>
+    `${place.detail || place.kind} (${place.x}, ${place.y})`).join(" · ") || "None learned yet";
   const condition = agent.alive ? (agent.disease ? `Ill · ${agent.disease}` : "Living") : agent.buried ? "Buried" : `Deceased · ${agent.death_cause || "unknown cause"}`;
   const symbol = agent.sex === "female" ? "♀" : "♂";
   ui.inspector.innerHTML = `<div class="inspector-content"><div class="inspector-head"><div class="agent-avatar">${symbol}</div><div><h2>${escapeHtml(agent.name)}</h2><p>${escapeHtml(age)} · ${escapeHtml(agent.sex)}</p></div><button class="close-inspector" aria-label="Close inspector">×</button></div>
@@ -943,7 +945,7 @@ function renderInspector() {
   ui.inspector.querySelector(".condition")?.after(habitat);
   const explanation = document.createElement("div");
   explanation.className = "action-explanation";
-  explanation.textContent = [agent.last_action?.reason, agent.last_result,
+  explanation.textContent = [agent.last_action?.reason, agent.last_result, `Known places: ${knownPlaces}`,
     !agent.alive && agent.death_details ? `Death report: ${agent.death_cause || "unrecorded cause"}. Hunger ${Math.round(agent.death_details.hunger ?? agent.hunger)}, thirst ${Math.round(agent.death_details.thirst ?? agent.thirst)}, energy ${Math.round(agent.death_details.energy ?? agent.energy)}. ${agent.death_details.disease || ""} ${agent.death_details.attribution || ""}` : "",
     agent.family_offer && agent.family_offer_until_tick >= world.tick ? `Family proposal: ${agent.family_offer.action} · waiting for an answer` : "",
     agent.pregnancy_months_remaining != null ? `Birth in about ${Math.ceil((agent.pregnancy_months_remaining * (world.month_length_seconds || 60) - (world.month_progress_seconds || 0)) / (world.time_scale || 1))} real seconds at current speed` : "",

@@ -18,7 +18,7 @@ The starting date is an approximate thematic choice. The simulation is not a sci
 
 ### Shared model, separate minds
 
-All agents use one world-wide LLM model. The current implementation follows the latest project choice: only `qwen2.5:0.5b` is enabled. Each agent still has an independent mind: private observations, memories, experiences, traits, relationships, and life history are sent separately to that shared model for each decision. Sharing an LLM does not mean sharing a conversation or a collective brain. General model switching remains a possible later experiment.
+All agents use one world-wide LLM model. The current implementation follows the latest project choice: only `qwen2.5:0.5b` is enabled. Each agent still has an independent mind: private observations, memories, experiences, traits, relationships, spatial memories, and life history are sent separately to that shared model for each decision. People remember places where they find food and water and where they build; emergency choices can route them to remembered sources or shelters if those places still exist and a physical route is available. Sharing an LLM does not mean sharing a conversation or a collective brain. General model switching remains a possible later experiment.
 
 An LLM is one part of an agent's decision process, not the world itself. The agent receives a bounded view of its situation and chooses from available actions. The world simulation decides what those actions cause. After the brain chooses a resource trip or construction task, the body continues walking or gathering until that action completes; urgent biological needs can interrupt it for a new decision. This prevents each walking step from becoming an unrelated new intention.
 

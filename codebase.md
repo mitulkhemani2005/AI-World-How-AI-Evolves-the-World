@@ -40,7 +40,7 @@ The saved world stores a procedural terrain cell for every longitude/latitude co
 
 | File | Responsibility | Inspect it when… |
 | --- | --- | --- |
-| `backend/app/domain.py` | Validated agent, world, action, event, and update schemas. The world stores one shared model name. | A request or persisted snapshot has invalid fields. |
+| `backend/app/domain.py` | Validated agent, world, action, event, and update schemas, including each agent's private spatial place memories. The world stores one shared model name. | A request or persisted snapshot has invalid fields. |
 | `backend/app/settings.py` | Ollama URL/model, request timeout, decision interval, month length, event probabilities, database path, and saved-event limit. | A runtime default or `.env` value is wrong. |
 | `backend/app/agent_brain/ollama_client.py` | Builds private observations and requests bounded structured decisions from Ollama. | Model responses fail validation or agents make unexpected proposals. |
 | `backend/app/simulation/engine.py` | Resolves quick action cycles, advances needs on the simulation-month clock, runs animal NPC behavior, disease, hazards, relationships, teaching, birth/death, mourning, burial, and construction. | A world consequence is missing or inconsistent. |
@@ -81,6 +81,8 @@ Vite renders the continuous land, figures, resources, and inspectable life recor
 The browser never advances biology. Agent decision rounds use a fixed short cadence plus inference latency. A separate clock advances one simulation month for each 60 seconds of elapsed real running time; spectator speed is fixed at 1×. A model-selected trip, including family reunion, can continue without asking the LLM to reselect its intention at every step. `decision_source` distinguishes fresh choices from continuation and fallback, while `intention_source` records the task's original source. `pending_action`, `construction_project`, `visited_cells` and `last_result` persist individual progress. The `POST /api/world/tick` endpoint remains for legacy clients but is not exposed in the spectator interface. The frontend displays simulated year/month and uses stable lighting; it does not read the spectator's local clock. Animals never call the LLM. Bodies persist until burial. Pause invalidates model proposals still in flight. SQLite includes the random stream and pending work.
 
 Living population is capped at 128 to bound local LLM and simulation load. Human extinction is recorded while ecology continues. Recoverable action errors retry with backoff; failed ecology updates roll back the partial update and retry. Only explicit pause stops a running world. Startup resumes saved running worlds; shutdown preserves that choice. Wildlife is capped by healthy habitat and a global maximum of 24. Kept animals have a separate population budget capped at 24. Spawn, reproduction and migration all use `animal_capacity` from `rules.py`. Migration removes surplus animals without creating carcasses.
+
+Place memories are stored per `Agent` in `place_memories`; successful food and water use and construction teach coordinates to that person. During urgent food, water, or harsh-weather situations, the engine checks that a remembered resource or shelter still exists, then routes using the same terrain and ocean-aware pathfinding as ordinary actions. These memories do not grant knowledge to relatives or reveal undiscovered places.
 
 ## Debugging path
 

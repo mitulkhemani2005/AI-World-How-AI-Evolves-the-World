@@ -6,7 +6,7 @@
 
 ## The idea
 
-Two agents start the world: one male and one female, in a viable natural habitat near food, wood, and water. Both use the pinned local Ollama model `qwen2.5:0.5b`, while keeping distinct memories, traits, relationships, and observations. They need to find food and water, rest, respond to illness and danger, communicate, form relationships, and decide whether to have and care for children. As generations grow, they may teach, build homes and property, form groups, fight, create beliefs, or disappear.
+Two agents start the world: one male and one female, in a viable natural habitat near food, wood, and water. Both use the pinned local Ollama model `qwen2.5:0.5b`, while keeping distinct memories, traits, relationships, and observations. They remember useful food and water locations and places they build, and can route toward remembered resources or shelters when urgent needs or dangerous weather arise. They need to find food and water, rest, respond to illness and danger, communicate, form relationships, and decide whether to have and care for children. As generations grow, they may teach, build homes and property, form groups, fight, create beliefs, or disappear.
 
 The spectator does not direct normal daily choices. The world advances on its own once started. A spectator can inspect and adjust an individual's biology or drag an event onto the land. Disasters and diseases can also happen through simulation rules without intervention. [Implementation status and further plans](implementation-status.md) distinguishes working mechanisms from future research.
 

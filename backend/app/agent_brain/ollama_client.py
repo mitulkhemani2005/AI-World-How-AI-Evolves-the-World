@@ -94,6 +94,8 @@ class OllamaClient:
                              for person in full["nearby_agents"][:8]],
             "local_resources": full["visible_resources"][:12],
             "local_shelters": [item["kind"] for item in full["nearby_structures"]],
+            # Spatial memories belong to this agent and are never copied from other minds.
+            "known_places": full["agent"]["known_places"],
             "land_condition": {"health": round(land.condition), "fertility": round(land.fertility),
                                "pollution": round(land.pollution)} if land else None,
         }
@@ -121,6 +123,7 @@ class OllamaClient:
             "Use and repair shared buildings/items instead of making duplicates. Make essentials for real needs. "
             "Predators are dangerous: flee, learn weapon making, craft and equip protection. "
             "To discover land across oceans, experiment with raft building at the coast, gather wood, craft, board, sail and disembark. "
+            "Use your known place coordinates when an urgent need has no nearby visible source. "
             "A resource choice includes walking there first. Bonding/reproduction need independent mutual "
             "consent. Do not invent success. If speaking or creating a group/belief, supply a short message; "
             "when teaching, use the listed lesson exactly. Return choice and a short reason.\n"
@@ -503,6 +506,11 @@ class OllamaClient:
                 "energy": round(agent.energy),
                 "disease": agent.disease,
                 "memories": agent.memories[-4:],
+                "known_places": [
+                    {"kind": place.kind, "detail": place.detail, "x": place.x, "y": place.y,
+                     "last_seen_tick": place.last_seen_tick}
+                    for place in agent.place_memories[-12:]
+                ],
                 "knowledge": agent.knowledge[-8:],
                 "inventory": agent.inventory,
                 "traits": agent.traits,

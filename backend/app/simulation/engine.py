@@ -18,6 +18,7 @@ from app.domain import (
     CropPlot,
     EventKind,
     EventSource,
+    PlaceMemory,
     ResourceNode,
     SocialGroup,
     SpectatorEventRequest,
@@ -493,9 +494,21 @@ class SimulationEngine(ActivityRules):
         These explicit reflex records never create food, heal freely, or supply family consent.
         Every move and meal still uses the same navigation and resource rules as an LLM action.
         """
+        self._learn_visible_places(world)
         for person in tuple(world.agents):
             if not person.alive or person.age_days < 3 * 365 or now - self._reflex_at.get(person.id, -10) < 0.8:
                 continue
+            # During harsh weather, return to a personally remembered usable shelter.
+            if world.weather in {"cold", "rain", "wind"} and not self._has_shelter(world, person):
+                shelter = self._remembered_shelter(world, person)
+                if shelter:
+                    action = self._move_or_act(world, person, shelter, "move", "Return to a remembered shelter during dangerous weather")
+                    if action.action != "rest":
+                        self._reflex_at[person.id] = now
+                        person.decision_source = "reflex"
+                        result = self._apply_action(world, person, action)
+                        self._record_action(world, person, action, result)
+                        continue
             children = [child for child in world.agents if child.alive and person.id in child.parent_ids
                         and child.age_days < 3 * 365 and self._distance(person, child) <= 1]
             hungry = max([person.hunger] + [child.hunger for child in children])
@@ -538,6 +551,7 @@ class SimulationEngine(ActivityRules):
                     if person.crafting_project and not item_needed(world, person, person.crafting_project):
                         person.crafting_project = None
                         person.pending_action = None
+                self._learn_visible_places(world)
                 self._advance_time(world, elapsed_seconds, force_month)
                 world_id = world.id
                 decision_epoch = self._decision_epoch
@@ -813,6 +827,7 @@ class SimulationEngine(ActivityRules):
             self._foodborne_risk(world, agent, food)
             # Young dependents are fed when a nearby parent finds food for the family.
             self._share_food_with_dependents(world, agent, food)
+            self._remember_place(agent, "food", food.x, food.y, food.kind, world.tick)
             self._remember(agent, "Found food here and ate it.")
             self._learn(agent, "foraging")
             return "Found food and ate."
@@ -825,6 +840,7 @@ class SimulationEngine(ActivityRules):
             if water.contamination >= 15 and self._random.random() < min(0.8, water.contamination / 100):
                 self._infect(world, agent, "waterborne infection", EventSource.NATURAL)
             self._share_water_with_dependents(world, agent, water)
+            self._remember_place(agent, "water", water.x, water.y, "fresh water", world.tick)
             self._remember(agent, "Found water here and drank.")
             self._learn(agent, "finding water")
             return "Found water and drank."
@@ -1717,9 +1733,11 @@ class SimulationEngine(ActivityRules):
         if action.action == "gather":
             resource_kind = action.resource_kind or "wood"
         if action.action == "forage":
+            if not food_target:
+                food_target = self._remembered_resource(world, agent, FOOD_KINDS)
             if not food_target or (food_target.x == agent.x and food_target.y == agent.y):
                 return action
-            return self._move_or_act(world, agent, food_target, "forage", "Move toward an edible resource")
+            return self._move_or_act(world, agent, food_target, "forage", "Move toward a remembered edible resource")
         if not resource_kind:
             return action
         local_resource = self._resource_at(world, resource_kind, agent.x, agent.y)
@@ -1727,6 +1745,8 @@ class SimulationEngine(ActivityRules):
             return action
         # The engine may only route toward a resource that this person can currently observe.
         target = self._nearest_resource(world, resource_kind, agent)
+        if not target:
+            target = self._remembered_resource(world, agent, {resource_kind})
         if not target:
             return action
         return self._move_or_act(
@@ -1772,6 +1792,10 @@ class SimulationEngine(ActivityRules):
             built_at_tick=world.tick,
         )
         world.structures.append(structure)
+        # The builder remembers where this shared place was made for future emergencies.
+        self._remember_place(agent, "structure", structure.x, structure.y, kind, world.tick)
+        if kind in SHELTER_KINDS:
+            self._remember_place(agent, "shelter", structure.x, structure.y, kind, world.tick)
         self._learn(agent, f"building:{kind}")
         old_level = world.tech_level
         world.tech_level = max(old_level, min(3, len(world.structures) // 2))
@@ -2089,6 +2113,67 @@ class SimulationEngine(ActivityRules):
     def _remember(agent: Agent, memory: str) -> None:
         agent.memories.append(memory)
         agent.memories = agent.memories[-80:]
+
+    @staticmethod
+    def _remember_place(agent: Agent, kind: str, x: int, y: int, detail: str, tick: int) -> None:
+        """Keep private coordinates for useful places, updating repeats in place."""
+        place = next((item for item in agent.place_memories
+                      if item.kind == kind and item.x == x and item.y == y and item.detail == detail), None)
+        if place:
+            place.last_seen_tick = tick
+        else:
+            agent.place_memories.append(PlaceMemory(kind=kind, x=x, y=y, detail=detail, last_seen_tick=tick))
+        agent.place_memories = agent.place_memories[-128:]
+
+    def _learn_visible_places(self, world: WorldState) -> None:
+        """Record nearby resource and building locations in each person's own memory."""
+        for agent in world.agents:
+            if not agent.alive:
+                continue
+            for node in world.resources:
+                if node.quantity <= 0 or self._distance_to(agent.x, agent.y, node.x, node.y, world.width) > 5:
+                    continue
+                kind = "water" if node.kind == "water" else "food" if node.kind in FOOD_KINDS else "resource"
+                self._remember_place(agent, kind, node.x, node.y, node.kind, world.tick)
+            for building in world.structures:
+                if building.condition < 20 or self._distance_to(agent.x, agent.y, building.x, building.y, world.width) > 3:
+                    continue
+                self._remember_place(agent, "structure", building.x, building.y, building.kind, world.tick)
+                if building.kind in SHELTER_KINDS:
+                    self._remember_place(agent, "shelter", building.x, building.y, building.kind, world.tick)
+
+    def _remembered_resource(self, world: WorldState, agent: Agent, kinds: set[str]) -> ResourceNode | None:
+        """Find the nearest available remembered source reachable with current travel rules."""
+        memories = [place for place in agent.place_memories
+                    if (place.kind == "water" and "water" in kinds)
+                    or (place.kind == "food" and place.detail in kinds)
+                    or (place.kind == "resource" and place.detail in kinds)]
+        candidates: list[ResourceNode] = []
+        for memory in memories:
+            node = next((item for item in world.resources if item.x == memory.x and item.y == memory.y
+                         and item.quantity > 0 and item.kind in kinds), None)
+            if node and node not in candidates:
+                candidates.append(node)
+        candidates.sort(key=lambda item: (self._distance_to(agent.x, agent.y, item.x, item.y, world.width),
+                                          item.contamination))
+        for node in candidates:
+            step = self._move_or_act(world, agent, node, "gather", "Check remembered source route")
+            if step.action != "rest":
+                return node
+        return None
+
+    def _remembered_shelter(self, world: WorldState, agent: Agent) -> Structure | None:
+        """Find the closest surviving shelter this person has personally learned."""
+        memories = [place for place in agent.place_memories if place.kind == "shelter"]
+        candidates = [building for building in world.structures if building.kind in SHELTER_KINDS
+                      and building.condition >= 20
+                      and any(place.x == building.x and place.y == building.y for place in memories)]
+        candidates.sort(key=lambda item: self._distance_to(agent.x, agent.y, item.x, item.y, world.width))
+        for building in candidates:
+            step = self._move_or_act(world, agent, building, "move", "Return to a remembered shelter")
+            if step.action != "rest":
+                return building
+        return None
 
     @staticmethod
     def _learn(agent: Agent, knowledge: str) -> None:
