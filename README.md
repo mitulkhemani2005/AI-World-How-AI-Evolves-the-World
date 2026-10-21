@@ -139,7 +139,3 @@ python -m unittest discover -s backend/tests -v
 ```
 
 Frontend checks execute the actual application update and frame functions with real Three.js geometry and math, replacing browser/GPU surfaces. They cover populated frames, movement, UV alignment, figure selection, camera collision limits, hover inspection, event animation/disposal, compatibility picking, death, burial, and reset; they do not claim to test a physical GPU. Backend checks use temporary databases and cover the shared-model contract, fallback construction, timing during slow inference, pause, resource conservation, food production, teaching, consent, birth, disease, persistence, wildlife spawning, terrain care, GPU-first fallback, fixed-clock behavior, and continued running after extinction or recoverable errors.
-
-## License
-
-MIT. See [LICENSE](LICENSE).
